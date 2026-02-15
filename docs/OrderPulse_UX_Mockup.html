@@ -1,0 +1,888 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>OrderPulse - UX Mockup</title>
+<style>
+  :root {
+    --bg: #f5f7fa;
+    --sidebar: #0f172a;
+    --sidebar-hover: #1e293b;
+    --sidebar-active: #2563eb;
+    --card: #ffffff;
+    --border: #e2e8f0;
+    --text: #1e293b;
+    --text-muted: #64748b;
+    --accent: #2563eb;
+    --accent-light: #eff6ff;
+    --green: #16a34a;
+    --green-bg: #f0fdf4;
+    --red: #dc2626;
+    --red-bg: #fef2f2;
+    --amber: #d97706;
+    --amber-bg: #fffbeb;
+    --purple: #9333ea;
+    --purple-bg: #faf5ff;
+    --indigo: #4f46e5;
+    --indigo-bg: #eef2ff;
+    --orange: #ea580c;
+    --orange-bg: #fff7ed;
+    --gray: #6b7280;
+    --gray-bg: #f9fafb;
+    --cyan: #0891b2;
+    --cyan-bg: #ecfeff;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); display: flex; min-height: 100vh; }
+
+  /* Sidebar */
+  .sidebar { width: 240px; background: var(--sidebar); color: #fff; padding: 0; display: flex; flex-direction: column; position: fixed; top: 0; left: 0; bottom: 0; z-index: 100; }
+  .sidebar-brand { padding: 20px 20px 16px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+  .sidebar-brand h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.5px; }
+  .sidebar-brand h1 span { color: #60a5fa; }
+  .sidebar-brand p { font-size: 11px; color: #94a3b8; margin-top: 2px; }
+  .sidebar-nav { flex: 1; padding: 12px 8px; }
+  .nav-item { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 8px; cursor: pointer; font-size: 14px; color: #94a3b8; transition: all 0.15s; margin-bottom: 2px; }
+  .nav-item:hover { background: var(--sidebar-hover); color: #e2e8f0; }
+  .nav-item.active { background: var(--sidebar-active); color: #fff; font-weight: 500; }
+  .nav-item svg { width: 18px; height: 18px; flex-shrink: 0; }
+  .nav-item .badge { margin-left: auto; background: #ef4444; color: #fff; font-size: 11px; padding: 1px 7px; border-radius: 10px; font-weight: 600; }
+  .nav-section { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: #475569; padding: 16px 14px 6px; }
+  .sidebar-user { padding: 16px 20px; border-top: 1px solid rgba(255,255,255,0.08); display: flex; align-items: center; gap: 10px; }
+  .sidebar-user .avatar { width: 32px; height: 32px; background: #3b82f6; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; }
+  .sidebar-user .info { font-size: 13px; }
+  .sidebar-user .info .name { color: #e2e8f0; }
+  .sidebar-user .info .email { color: #64748b; font-size: 11px; }
+
+  /* Main */
+  .main { flex: 1; margin-left: 240px; }
+  .topbar { background: var(--card); border-bottom: 1px solid var(--border); padding: 14px 28px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 50; }
+  .topbar h2 { font-size: 18px; font-weight: 600; }
+  .topbar .search { display: flex; align-items: center; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 7px 12px; gap: 8px; width: 300px; }
+  .topbar .search input { border: none; background: none; outline: none; font-size: 13px; width: 100%; color: var(--text); }
+  .topbar .search svg { color: var(--text-muted); width: 16px; height: 16px; }
+  .content { padding: 24px 28px; }
+
+  /* Cards */
+  .status-cards { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; margin-bottom: 24px; }
+  .status-card { background: var(--card); border-radius: 12px; padding: 18px 20px; border: 1px solid var(--border); cursor: pointer; transition: all 0.15s; }
+  .status-card:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+  .status-card.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .status-card .label { font-size: 12px; color: var(--text-muted); font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; }
+  .status-card .value { font-size: 32px; font-weight: 700; margin: 4px 0; }
+  .status-card .sub { font-size: 12px; color: var(--text-muted); }
+  .sc-blue .value { color: var(--accent); }
+  .sc-red .value { color: var(--red); }
+  .sc-orange .value { color: var(--orange); }
+  .sc-purple .value { color: var(--purple); }
+  .sc-green .value { color: var(--green); }
+
+  /* Panels */
+  .panels { display: grid; grid-template-columns: 1fr 380px; gap: 20px; }
+  .panel { background: var(--card); border-radius: 12px; border: 1px solid var(--border); overflow: hidden; }
+  .panel-header { padding: 16px 20px; border-bottom: 1px solid var(--border); font-weight: 600; font-size: 15px; display: flex; justify-content: space-between; align-items: center; }
+  .panel-header .view-all { font-size: 12px; color: var(--accent); cursor: pointer; font-weight: 500; }
+  .panel-body { padding: 0; }
+
+  /* Activity Feed */
+  .activity-item { display: flex; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--border); cursor: pointer; transition: background 0.1s; }
+  .activity-item:hover { background: var(--bg); }
+  .activity-item:last-child { border-bottom: none; }
+  .activity-icon { width: 36px; height: 36px; border-radius: 8px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 16px; }
+  .activity-info { flex: 1; min-width: 0; }
+  .activity-info .title { font-size: 13px; font-weight: 500; line-height: 1.4; }
+  .activity-info .meta { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+  .activity-info .retailer { font-weight: 600; }
+
+  /* Attention Items */
+  .attention-item { padding: 14px 20px; border-bottom: 1px solid var(--border); }
+  .attention-item:last-child { border-bottom: none; }
+  .attention-item .tag { display: inline-block; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; padding: 2px 8px; border-radius: 4px; margin-bottom: 6px; }
+  .attention-item .desc { font-size: 13px; line-height: 1.4; }
+  .attention-item .time { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+
+  /* Badge */
+  .badge-status { display: inline-flex; align-items: center; font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 20px; white-space: nowrap; }
+  .badge-placed { background: var(--accent-light); color: var(--accent); }
+  .badge-shipped { background: var(--indigo-bg); color: var(--indigo); }
+  .badge-transit { background: var(--cyan-bg); color: var(--cyan); }
+  .badge-delivered { background: var(--green-bg); color: var(--green); }
+  .badge-exception { background: var(--red-bg); color: var(--red); }
+  .badge-return { background: var(--orange-bg); color: var(--orange); }
+  .badge-refund { background: var(--purple-bg); color: var(--purple); }
+  .badge-cancelled { background: var(--gray-bg); color: var(--gray); }
+
+  /* Order List */
+  .filter-bar { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; align-items: center; }
+  .filter-bar select, .filter-bar input { padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; background: var(--card); color: var(--text); outline: none; }
+  .filter-bar select:focus, .filter-bar input:focus { border-color: var(--accent); }
+  .filter-chips { display: flex; gap: 8px; }
+  .chip { padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: 500; cursor: pointer; border: 1px solid var(--border); background: var(--card); transition: all 0.15s; }
+  .chip:hover { border-color: var(--accent); color: var(--accent); }
+  .chip.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+  .order-table { width: 100%; background: var(--card); border-radius: 12px; border: 1px solid var(--border); overflow: hidden; }
+  .order-table th { text-align: left; padding: 12px 16px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); background: var(--bg); border-bottom: 1px solid var(--border); font-weight: 600; }
+  .order-table td { padding: 14px 16px; border-bottom: 1px solid var(--border); font-size: 13px; vertical-align: middle; }
+  .order-table tr:hover td { background: #f8fafc; }
+  .order-table tr { cursor: pointer; }
+  .order-table .retailer-cell { display: flex; align-items: center; gap: 10px; }
+  .retailer-icon { width: 28px; height: 28px; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; color: #fff; flex-shrink: 0; }
+  .order-table .items-preview { color: var(--text-muted); font-size: 12px; max-width: 250px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .order-table .amount { font-weight: 600; font-variant-numeric: tabular-nums; }
+
+  /* Order Detail */
+  .detail-header { background: var(--card); border-radius: 12px; border: 1px solid var(--border); padding: 24px; margin-bottom: 20px; }
+  .detail-header .top-row { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }
+  .detail-header .retailer-name { font-size: 20px; font-weight: 700; display: flex; align-items: center; gap: 12px; }
+  .detail-header .order-num { font-size: 14px; color: var(--text-muted); margin-top: 4px; }
+  .detail-header .meta-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; }
+  .detail-header .meta-item .label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+  .detail-header .meta-item .value { font-size: 14px; font-weight: 600; margin-top: 2px; }
+
+  .detail-grid { display: grid; grid-template-columns: 1fr 360px; gap: 20px; }
+  .section { background: var(--card); border-radius: 12px; border: 1px solid var(--border); margin-bottom: 20px; overflow: hidden; }
+  .section-header { padding: 16px 20px; border-bottom: 1px solid var(--border); font-weight: 600; font-size: 15px; }
+  .section-body { padding: 16px 20px; }
+
+  .line-item { display: flex; gap: 14px; padding: 14px 0; border-bottom: 1px solid var(--border); }
+  .line-item:last-child { border-bottom: none; }
+  .line-item .img { width: 56px; height: 56px; background: var(--bg); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 20px; flex-shrink: 0; }
+  .line-item .info { flex: 1; }
+  .line-item .name { font-size: 13px; font-weight: 500; }
+  .line-item .sku { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+  .line-item .price { font-size: 14px; font-weight: 600; text-align: right; }
+  .line-item .qty { font-size: 11px; color: var(--text-muted); text-align: right; }
+
+  .shipment-card { padding: 16px 20px; border-bottom: 1px solid var(--border); }
+  .shipment-card:last-child { border-bottom: none; }
+  .shipment-card .carrier { font-weight: 600; font-size: 14px; }
+  .shipment-card .tracking { font-size: 13px; color: var(--accent); margin-top: 4px; cursor: pointer; }
+  .shipment-card .detail-row { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-muted); margin-top: 8px; }
+
+  /* Timeline */
+  .timeline { padding: 16px 20px; }
+  .timeline-item { display: flex; gap: 14px; padding-bottom: 20px; position: relative; }
+  .timeline-item::before { content: ''; position: absolute; left: 15px; top: 32px; bottom: 0; width: 2px; background: var(--border); }
+  .timeline-item:last-child::before { display: none; }
+  .timeline-dot { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 14px; flex-shrink: 0; z-index: 1; }
+  .timeline-info { flex: 1; padding-top: 4px; }
+  .timeline-info .event { font-size: 13px; font-weight: 500; }
+  .timeline-info .time { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+  /* Return Center */
+  .return-cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+  .return-card { background: var(--card); border-radius: 12px; border: 1px solid var(--border); overflow: hidden; }
+  .return-card .card-top { padding: 16px 20px; border-bottom: 1px solid var(--border); }
+  .return-card .card-top .retailer { font-weight: 600; font-size: 14px; }
+  .return-card .card-top .rma { font-size: 12px; color: var(--text-muted); }
+  .return-card .card-body { padding: 16px 20px; }
+  .return-card .items-list { font-size: 13px; margin-bottom: 12px; }
+  .return-card .items-list li { margin-bottom: 4px; list-style: none; }
+  .return-card .items-list li::before { content: '↩'; margin-right: 8px; }
+  .return-card .deadline { display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 8px 12px; border-radius: 8px; margin-bottom: 12px; }
+  .return-card .deadline.urgent { background: var(--red-bg); color: var(--red); }
+  .return-card .deadline.ok { background: var(--green-bg); color: var(--green); }
+  .return-card .label-area { background: var(--bg); border-radius: 8px; padding: 16px; text-align: center; }
+  .return-card .label-area .qr-placeholder { width: 120px; height: 120px; margin: 0 auto 8px; background: #fff; border: 2px dashed var(--border); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 40px; }
+  .return-card .label-area .action-btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer; border: 1px solid var(--accent); color: var(--accent); background: #fff; margin-top: 8px; }
+  .return-card .card-footer { padding: 12px 20px; background: var(--bg); display: flex; justify-content: space-between; align-items: center; font-size: 12px; }
+  .return-card .dropoff { font-size: 12px; color: var(--text-muted); margin-top: 8px; display: flex; align-items: center; gap: 6px; }
+
+  /* Page tabs */
+  .page-tabs { display: flex; gap: 0; border-bottom: 2px solid var(--border); margin-bottom: 20px; }
+  .page-tab { padding: 10px 20px; font-size: 13px; font-weight: 500; color: var(--text-muted); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -2px; transition: all 0.15s; }
+  .page-tab:hover { color: var(--text); }
+  .page-tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+
+  /* Print All button */
+  .print-all-btn { display: inline-flex; align-items: center; gap: 8px; padding: 10px 20px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; background: var(--accent); color: #fff; border: none; margin-bottom: 20px; }
+  .print-all-btn:hover { opacity: 0.9; }
+
+  /* Mockup banner */
+  .mockup-banner { background: linear-gradient(135deg, #1e40af 0%, #7c3aed 100%); color: #fff; padding: 8px 20px; font-size: 12px; text-align: center; font-weight: 500; letter-spacing: 0.5px; }
+
+  /* Page navigation indicator */
+  .page-title-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+
+  /* Hide non-active pages */
+  .page { display: none; }
+  .page.active { display: block; }
+</style>
+</head>
+<body>
+
+<div class="mockup-banner">ORDERPULSE UX MOCKUP — Interactive Prototype (click sidebar items to navigate)</div>
+
+<!-- Sidebar -->
+<nav class="sidebar" style="margin-top: 32px;">
+  <div class="sidebar-brand">
+    <h1>Order<span>Pulse</span></h1>
+    <p>AI-Powered Order Tracking</p>
+  </div>
+  <div class="sidebar-nav">
+    <div class="nav-section">Overview</div>
+    <div class="nav-item active" onclick="showPage('dashboard')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+      Dashboard
+    </div>
+    <div class="nav-item" onclick="showPage('orders')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/></svg>
+      All Orders
+    </div>
+    <div class="nav-section">Returns</div>
+    <div class="nav-item" onclick="showPage('returns')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1014.85-3.36L3.51 4.51"/></svg>
+      Return Center
+      <span class="badge">3</span>
+    </div>
+    <div class="nav-item" onclick="showPage('awaiting-refund')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
+      Awaiting Refund
+      <span class="badge">2</span>
+    </div>
+    <div class="nav-section">Admin</div>
+    <div class="nav-item" onclick="showPage('review')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+      Review Queue
+      <span class="badge">4</span>
+    </div>
+    <div class="nav-item" onclick="showPage('settings')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+      Settings
+    </div>
+  </div>
+  <div class="sidebar-user">
+    <div class="avatar">SS</div>
+    <div class="info">
+      <div class="name">Steven Settle</div>
+      <div class="email">purchases@stevensettle.com</div>
+    </div>
+  </div>
+</nav>
+
+<!-- Main Content -->
+<div class="main" style="margin-top: 32px;">
+  <div class="topbar">
+    <h2 id="page-title">Dashboard</h2>
+    <div class="search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input type="text" placeholder="Search orders, products, retailers..." />
+    </div>
+  </div>
+
+  <!-- ═══ DASHBOARD ═══ -->
+  <div class="content page active" id="page-dashboard">
+    <div class="status-cards">
+      <div class="status-card sc-blue active" onclick="showPage('orders')">
+        <div class="label">Awaiting Delivery</div>
+        <div class="value">12</div>
+        <div class="sub">3 out for delivery today</div>
+      </div>
+      <div class="status-card sc-red">
+        <div class="label">Needs Attention</div>
+        <div class="value">2</div>
+        <div class="sub">1 delivery exception</div>
+      </div>
+      <div class="status-card sc-orange" onclick="showPage('returns')">
+        <div class="label">Open Returns</div>
+        <div class="value">3</div>
+        <div class="sub">1 deadline approaching</div>
+      </div>
+      <div class="status-card sc-purple" onclick="showPage('awaiting-refund')">
+        <div class="label">Awaiting Refund</div>
+        <div class="value">2</div>
+        <div class="sub">$84.97 pending</div>
+      </div>
+      <div class="status-card sc-green">
+        <div class="label">Delivered This Week</div>
+        <div class="value">5</div>
+        <div class="sub">All confirmed</div>
+      </div>
+    </div>
+
+    <div class="panels">
+      <div class="panel">
+        <div class="panel-header">Recent Activity <span class="view-all" onclick="showPage('orders')">View all orders →</span></div>
+        <div class="panel-body">
+          <div class="activity-item">
+            <div class="activity-icon" style="background: var(--green-bg); color: var(--green);">📦</div>
+            <div class="activity-info">
+              <div class="title">Package delivered — left at front door</div>
+              <div class="meta"><span class="retailer">Amazon</span> · #112-4839274 · Sony WH-1000XM5 Headphones · 2 min ago</div>
+            </div>
+          </div>
+          <div class="activity-item">
+            <div class="activity-icon" style="background: var(--indigo-bg); color: var(--indigo);">🚚</div>
+            <div class="activity-info">
+              <div class="title">Shipped via FedEx — estimated Feb 16</div>
+              <div class="meta"><span class="retailer">Best Buy</span> · #BBY01-8847261 · LG C4 65" OLED TV · 1 hour ago</div>
+            </div>
+          </div>
+          <div class="activity-item">
+            <div class="activity-icon" style="background: var(--orange-bg); color: var(--orange);">↩️</div>
+            <div class="activity-info">
+              <div class="title">Return label issued — ship by Feb 20</div>
+              <div class="meta"><span class="retailer">Nike</span> · #C10298374 · Air Max 90 (Size 11) · 3 hours ago</div>
+            </div>
+          </div>
+          <div class="activity-item">
+            <div class="activity-icon" style="background: var(--purple-bg); color: var(--purple);">💰</div>
+            <div class="activity-info">
+              <div class="title">Refund of $34.99 processed to Visa ····4242</div>
+              <div class="meta"><span class="retailer">Target</span> · #1029384756 · Instant Pot Duo 7-in-1 · 5 hours ago</div>
+            </div>
+          </div>
+          <div class="activity-item">
+            <div class="activity-icon" style="background: var(--amber-bg); color: var(--amber);">⏳</div>
+            <div class="activity-info">
+              <div class="title">Out for delivery — arriving by 8pm</div>
+              <div class="meta"><span class="retailer">Walmart</span> · #2000-9384-7265 · Dyson V15 Detect · 6 hours ago</div>
+            </div>
+          </div>
+          <div class="activity-item">
+            <div class="activity-icon" style="background: var(--accent-light); color: var(--accent);">✓</div>
+            <div class="activity-info">
+              <div class="title">Order placed — estimated delivery Feb 19–21</div>
+              <div class="meta"><span class="retailer">Etsy</span> · #3847291057 · Handmade Leather Wallet · Yesterday</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">Needs Attention</div>
+        <div class="panel-body">
+          <div class="attention-item">
+            <div class="tag" style="background: var(--red-bg); color: var(--red);">Delivery Exception</div>
+            <div class="desc">Package marked as delivered but you reported not received. Case opened with UPS.</div>
+            <div class="time">Amazon · #112-9387462 · 2 days ago</div>
+          </div>
+          <div class="attention-item">
+            <div class="tag" style="background: var(--amber-bg); color: var(--amber);">Return Deadline</div>
+            <div class="desc">Nike Air Max 90 return must be shipped by Feb 20 (5 days remaining).</div>
+            <div class="time">Nike · RMA-384729 · Label ready</div>
+          </div>
+          <div class="attention-item">
+            <div class="tag" style="background: var(--orange-bg); color: var(--orange);">Overdue Delivery</div>
+            <div class="desc">Estimated delivery was Feb 10. No update in 4 days. Consider contacting seller.</div>
+            <div class="time">AliExpress · #8374659102 · Ordered Jan 15</div>
+          </div>
+          <div class="attention-item">
+            <div class="tag" style="background: var(--gray-bg); color: var(--gray);">Review Needed</div>
+            <div class="desc">AI couldn't parse email from "noreply@shop.obscure-brand.io" — manual review required.</div>
+            <div class="time">Unknown retailer · 8 hours ago</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ ORDER LIST ═══ -->
+  <div class="content page" id="page-orders">
+    <div class="filter-bar">
+      <div class="filter-chips">
+        <div class="chip active">All Orders</div>
+        <div class="chip">Awaiting Delivery</div>
+        <div class="chip">Needs Attention</div>
+        <div class="chip">Open Returns</div>
+        <div class="chip">Awaiting Refund</div>
+        <div class="chip">Delivered</div>
+        <div class="chip">Closed</div>
+      </div>
+    </div>
+    <div class="filter-bar">
+      <select><option>All Retailers</option><option>Amazon</option><option>Best Buy</option><option>Nike</option><option>Target</option><option>Walmart</option></select>
+      <input type="date" value="2026-01-01" /> <span style="color: var(--text-muted); font-size: 13px;">to</span> <input type="date" value="2026-02-14" />
+      <select><option>Sort: Newest First</option><option>Sort: Oldest First</option><option>Sort: Amount (High)</option><option>Sort: Amount (Low)</option></select>
+    </div>
+
+    <table class="order-table">
+      <thead>
+        <tr><th>Retailer</th><th>Order #</th><th>Date</th><th>Items</th><th>Total</th><th>Status</th><th>Last Update</th></tr>
+      </thead>
+      <tbody>
+        <tr onclick="showPage('detail')">
+          <td><div class="retailer-cell"><div class="retailer-icon" style="background:#ff9900;">A</div>Amazon</div></td>
+          <td style="font-family: monospace; font-size: 12px;">#112-4839274</td>
+          <td>Feb 10</td>
+          <td class="items-preview">Sony WH-1000XM5 Headphones</td>
+          <td class="amount">$298.00</td>
+          <td><span class="badge-status badge-delivered">Delivered</span></td>
+          <td style="font-size: 12px; color: var(--text-muted);">2 min ago</td>
+        </tr>
+        <tr>
+          <td><div class="retailer-cell"><div class="retailer-icon" style="background:#0046be;">BB</div>Best Buy</div></td>
+          <td style="font-family: monospace; font-size: 12px;">#BBY01-8847261</td>
+          <td>Feb 12</td>
+          <td class="items-preview">LG C4 65" OLED TV</td>
+          <td class="amount">$1,496.99</td>
+          <td><span class="badge-status badge-shipped">Shipped</span></td>
+          <td style="font-size: 12px; color: var(--text-muted);">1 hour ago</td>
+        </tr>
+        <tr>
+          <td><div class="retailer-cell"><div class="retailer-icon" style="background:#111;">N</div>Nike</div></td>
+          <td style="font-family: monospace; font-size: 12px;">#C10298374</td>
+          <td>Feb 1</td>
+          <td class="items-preview">Air Max 90 (Size 11)</td>
+          <td class="amount">$129.99</td>
+          <td><span class="badge-status badge-return">Return in Progress</span></td>
+          <td style="font-size: 12px; color: var(--text-muted);">3 hours ago</td>
+        </tr>
+        <tr>
+          <td><div class="retailer-cell"><div class="retailer-icon" style="background:#0071dc;">W</div>Walmart</div></td>
+          <td style="font-family: monospace; font-size: 12px;">#2000-9384-7265</td>
+          <td>Feb 11</td>
+          <td class="items-preview">Dyson V15 Detect Vacuum</td>
+          <td class="amount">$649.99</td>
+          <td><span class="badge-status badge-transit">Out for Delivery</span></td>
+          <td style="font-size: 12px; color: var(--text-muted);">6 hours ago</td>
+        </tr>
+        <tr>
+          <td><div class="retailer-cell"><div class="retailer-icon" style="background:#cc0000;">T</div>Target</div></td>
+          <td style="font-family: monospace; font-size: 12px;">#1029384756</td>
+          <td>Jan 28</td>
+          <td class="items-preview">Instant Pot Duo 7-in-1</td>
+          <td class="amount">$34.99</td>
+          <td><span class="badge-status badge-refund">Refunded</span></td>
+          <td style="font-size: 12px; color: var(--text-muted);">5 hours ago</td>
+        </tr>
+        <tr>
+          <td><div class="retailer-cell"><div class="retailer-icon" style="background:#f56400;">E</div>Etsy</div></td>
+          <td style="font-family: monospace; font-size: 12px;">#3847291057</td>
+          <td>Feb 13</td>
+          <td class="items-preview">Handmade Leather Wallet</td>
+          <td class="amount">$67.00</td>
+          <td><span class="badge-status badge-placed">Placed</span></td>
+          <td style="font-size: 12px; color: var(--text-muted);">Yesterday</td>
+        </tr>
+        <tr>
+          <td><div class="retailer-cell"><div class="retailer-icon" style="background:#ff9900;">A</div>Amazon</div></td>
+          <td style="font-family: monospace; font-size: 12px;">#112-9387462</td>
+          <td>Feb 5</td>
+          <td class="items-preview">Anker USB-C Hub, Cable Clips (3-pack)</td>
+          <td class="amount">$47.98</td>
+          <td><span class="badge-status badge-exception">Delivery Exception</span></td>
+          <td style="font-size: 12px; color: var(--text-muted);">2 days ago</td>
+        </tr>
+        <tr>
+          <td><div class="retailer-cell"><div class="retailer-icon" style="background:#e21836;">H</div>H&M</div></td>
+          <td style="font-family: monospace; font-size: 12px;">#6281937405</td>
+          <td>Feb 3</td>
+          <td class="items-preview">Slim Fit Chinos (Navy), Oxford Shirt</td>
+          <td class="amount">$79.98</td>
+          <td><span class="badge-status badge-return">Awaiting Refund</span></td>
+          <td style="font-size: 12px; color: var(--text-muted);">1 day ago</td>
+        </tr>
+      </tbody>
+    </table>
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 16px; font-size: 13px; color: var(--text-muted);">
+      <span>Showing 1–8 of 47 orders</span>
+      <div style="display: flex; gap: 4px;">
+        <span style="padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--accent); color: #fff; cursor: pointer;">1</span>
+        <span style="padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer;">2</span>
+        <span style="padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer;">3</span>
+        <span style="padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer;">→</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ ORDER DETAIL ═══ -->
+  <div class="content page" id="page-detail">
+    <div style="margin-bottom: 16px; font-size: 13px; color: var(--accent); cursor: pointer;" onclick="showPage('orders')">← Back to Orders</div>
+    <div class="detail-header">
+      <div class="top-row">
+        <div>
+          <div class="retailer-name"><div class="retailer-icon" style="background:#ff9900; font-size: 16px;">A</div> Amazon</div>
+          <div class="order-num">#112-4839274 · <span style="color: var(--accent); cursor: pointer;">View on Amazon →</span></div>
+        </div>
+        <span class="badge-status badge-delivered" style="font-size: 13px; padding: 6px 16px;">✓ Delivered</span>
+      </div>
+      <div class="meta-grid">
+        <div class="meta-item"><div class="label">Order Date</div><div class="value">Feb 10, 2026</div></div>
+        <div class="meta-item"><div class="label">Payment</div><div class="value">Visa ····4242</div></div>
+        <div class="meta-item"><div class="label">Ship To</div><div class="value">123 Main St, Austin TX</div></div>
+        <div class="meta-item"><div class="label">Total</div><div class="value" style="font-size: 18px;">$298.00</div></div>
+      </div>
+    </div>
+
+    <div class="detail-grid">
+      <div>
+        <!-- Line Items -->
+        <div class="section">
+          <div class="section-header">Items (1)</div>
+          <div class="section-body">
+            <div class="line-item">
+              <div class="img">🎧</div>
+              <div class="info">
+                <div class="name">Sony WH-1000XM5 Wireless Noise Canceling Headphones</div>
+                <div class="sku">ASIN: B09XS7JWHH · Qty: 1</div>
+              </div>
+              <div>
+                <div class="price">$298.00</div>
+                <div class="qty"><span class="badge-status badge-delivered" style="font-size: 10px;">Delivered</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <!-- Price Breakdown -->
+        <div class="section">
+          <div class="section-header">Price Breakdown</div>
+          <div class="section-body" style="font-size: 13px;">
+            <div style="display: flex; justify-content: space-between; padding: 6px 0;">
+              <span>Subtotal</span><span>$298.00</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; padding: 6px 0;">
+              <span>Shipping</span><span style="color: var(--green);">FREE</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; padding: 6px 0;">
+              <span>Tax</span><span>$24.59</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; padding: 8px 0; border-top: 2px solid var(--border); font-weight: 700; font-size: 15px; margin-top: 4px;">
+              <span>Total</span><span>$322.59</span>
+            </div>
+          </div>
+        </div>
+        <!-- Shipment -->
+        <div class="section">
+          <div class="section-header">Shipments (1)</div>
+          <div class="panel-body">
+            <div class="shipment-card">
+              <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                  <div class="carrier">📦 UPS Ground</div>
+                  <div class="tracking">1Z999AA10123456784 →</div>
+                </div>
+                <span class="badge-status badge-delivered">Delivered</span>
+              </div>
+              <div class="detail-row">
+                <span>Shipped: Feb 11</span>
+                <span>Est. Delivery: Feb 14</span>
+                <span>Delivered: Feb 14, 2:34 PM</span>
+              </div>
+              <div style="margin-top: 10px; padding: 10px; background: var(--green-bg); border-radius: 8px; font-size: 12px; color: var(--green);">
+                ✓ Delivered to front door · Signed by: S. SETTLE
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Timeline -->
+      <div>
+        <div class="section">
+          <div class="section-header">Order Timeline</div>
+          <div class="timeline">
+            <div class="timeline-item">
+              <div class="timeline-dot" style="background: var(--green-bg); color: var(--green);">✓</div>
+              <div class="timeline-info">
+                <div class="event">Delivered — left at front door</div>
+                <div class="time">Feb 14, 2026 · 2:34 PM</div>
+              </div>
+            </div>
+            <div class="timeline-item">
+              <div class="timeline-dot" style="background: var(--amber-bg); color: var(--amber);">🚛</div>
+              <div class="timeline-info">
+                <div class="event">Out for delivery</div>
+                <div class="time">Feb 14, 2026 · 8:12 AM</div>
+              </div>
+            </div>
+            <div class="timeline-item">
+              <div class="timeline-dot" style="background: var(--indigo-bg); color: var(--indigo);">📍</div>
+              <div class="timeline-info">
+                <div class="event">Arrived at local facility — Austin, TX</div>
+                <div class="time">Feb 13, 2026 · 11:45 PM</div>
+              </div>
+            </div>
+            <div class="timeline-item">
+              <div class="timeline-dot" style="background: var(--indigo-bg); color: var(--indigo);">🚚</div>
+              <div class="timeline-info">
+                <div class="event">In transit — departed Memphis, TN</div>
+                <div class="time">Feb 12, 2026 · 3:20 PM</div>
+              </div>
+            </div>
+            <div class="timeline-item">
+              <div class="timeline-dot" style="background: var(--cyan-bg); color: var(--cyan);">📦</div>
+              <div class="timeline-info">
+                <div class="event">Shipped via UPS Ground</div>
+                <div class="time">Feb 11, 2026 · 6:45 PM</div>
+              </div>
+            </div>
+            <div class="timeline-item">
+              <div class="timeline-dot" style="background: var(--accent-light); color: var(--accent);">💳</div>
+              <div class="timeline-info">
+                <div class="event">Payment charged — Visa ····4242</div>
+                <div class="time">Feb 10, 2026 · 10:02 AM</div>
+              </div>
+            </div>
+            <div class="timeline-item">
+              <div class="timeline-dot" style="background: var(--accent-light); color: var(--accent);">🛒</div>
+              <div class="timeline-info">
+                <div class="event">Order placed</div>
+                <div class="time">Feb 10, 2026 · 10:00 AM</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ RETURN CENTER ═══ -->
+  <div class="content page" id="page-returns">
+    <div class="page-tabs">
+      <div class="page-tab active">Need to Ship (3)</div>
+      <div class="page-tab">Shipped / In Transit (1)</div>
+      <div class="page-tab">Awaiting Refund (2)</div>
+      <div class="page-tab">Completed (8)</div>
+      <div class="page-tab">Rejected (0)</div>
+    </div>
+    <button class="print-all-btn">🖨️ Print All Return Labels (3)</button>
+
+    <div class="return-cards">
+      <div class="return-card">
+        <div class="card-top">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+              <div class="retailer">Nike</div>
+              <div class="rma">RMA-384729 · Order #C10298374</div>
+            </div>
+            <span class="badge-status badge-return">Label Issued</span>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="items-list">
+            <li>Air Max 90 (Size 11) — Wrong size</li>
+          </div>
+          <div class="deadline urgent">⚠️ Ship by Feb 20, 2026 (5 days remaining)</div>
+          <div class="label-area">
+            <div class="qr-placeholder">📱</div>
+            <div style="font-size: 12px; color: var(--text-muted);">Scan QR code at any UPS Store</div>
+            <button class="action-btn">📄 View Return Label</button>
+          </div>
+          <div class="dropoff">📍 UPS Store — 2901 S Capital of Texas Hwy, Austin TX</div>
+        </div>
+        <div class="card-footer">
+          <span>Refund: $129.99 after receipt</span>
+          <span style="color: var(--accent); cursor: pointer;">View order →</span>
+        </div>
+      </div>
+
+      <div class="return-card">
+        <div class="card-top">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+              <div class="retailer">Amazon</div>
+              <div class="rma">RMA-7482910 · Order #112-5839274</div>
+            </div>
+            <span class="badge-status badge-return">Label Issued</span>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="items-list">
+            <li>Logitech MX Master 3S Mouse — Defective scroll wheel</li>
+            <li>USB-C Dock Adapter — Wrong item received</li>
+          </div>
+          <div class="deadline ok">📅 Ship by Mar 5, 2026 (18 days remaining)</div>
+          <div class="label-area">
+            <div class="qr-placeholder">📱</div>
+            <div style="font-size: 12px; color: var(--text-muted);">Scan at Whole Foods or UPS</div>
+            <button class="action-btn">📄 View Return Label</button>
+          </div>
+          <div class="dropoff">📍 Whole Foods — 525 N Lamar Blvd, Austin TX</div>
+        </div>
+        <div class="card-footer">
+          <span>Refund: $84.98 after receipt</span>
+          <span style="color: var(--accent); cursor: pointer;">View order →</span>
+        </div>
+      </div>
+
+      <div class="return-card">
+        <div class="card-top">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+              <div class="retailer">Zara</div>
+              <div class="rma">RMA-91038475 · Order #ZR-8294017</div>
+            </div>
+            <span class="badge-status badge-return">Initiated</span>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="items-list">
+            <li>Oversized Wool Coat (M) — Changed mind</li>
+          </div>
+          <div class="deadline ok">📅 Ship by Feb 28, 2026 (13 days remaining)</div>
+          <div class="label-area" style="background: var(--amber-bg);">
+            <div style="font-size: 13px; color: var(--amber); font-weight: 600;">⏳ Return label being generated...</div>
+            <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">Usually ready within 24 hours</div>
+          </div>
+        </div>
+        <div class="card-footer">
+          <span>Refund: $149.00 after receipt</span>
+          <span style="color: var(--accent); cursor: pointer;">View order →</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ AWAITING REFUND ═══ -->
+  <div class="content page" id="page-awaiting-refund">
+    <p style="font-size: 14px; color: var(--text-muted); margin-bottom: 20px;">Items returned and received by the retailer, but refund not yet confirmed.</p>
+    <table class="order-table">
+      <thead>
+        <tr><th>Retailer</th><th>Order #</th><th>Items Returned</th><th>Refund Amount</th><th>Return Received</th><th>Days Waiting</th><th>Expected Timeline</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><div class="retailer-cell"><div class="retailer-icon" style="background:#e21836;">H</div>H&M</div></td>
+          <td style="font-family: monospace; font-size: 12px;">#6281937405</td>
+          <td>Slim Fit Chinos (Navy), Oxford Shirt</td>
+          <td class="amount">$79.98</td>
+          <td>Feb 8</td>
+          <td><span style="color: var(--amber); font-weight: 600;">6 days</span></td>
+          <td>5–10 business days</td>
+        </tr>
+        <tr>
+          <td><div class="retailer-cell"><div class="retailer-icon" style="background:#00539f;">G</div>Gap</div></td>
+          <td style="font-family: monospace; font-size: 12px;">#GP-4829105</td>
+          <td>Cable Knit Sweater (L)</td>
+          <td class="amount">$54.99</td>
+          <td>Feb 12</td>
+          <td><span style="color: var(--green); font-weight: 600;">2 days</span></td>
+          <td>3–5 business days</td>
+        </tr>
+      </tbody>
+    </table>
+    <div style="margin-top: 16px; padding: 16px; background: var(--purple-bg); border-radius: 12px; font-size: 13px; color: var(--purple);">
+      💡 <strong>Total pending refunds:</strong> $134.97 · Oldest return waiting 6 days · Both within expected timelines
+    </div>
+  </div>
+
+  <!-- ═══ REVIEW QUEUE ═══ -->
+  <div class="content page" id="page-review">
+    <p style="font-size: 14px; color: var(--text-muted); margin-bottom: 20px;">Emails that need your help — AI was uncertain about how to classify or parse these.</p>
+    <div class="section" style="margin-bottom: 16px;">
+      <div style="display: flex; border-bottom: 1px solid var(--border);">
+        <div style="flex: 1; padding: 20px; border-right: 1px solid var(--border);">
+          <div style="font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">Original Email</div>
+          <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 4px;">From: noreply@shop.obscure-brand.io</div>
+          <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px;">Subject: Your order update #OB-39481</div>
+          <div style="font-size: 13px; line-height: 1.6; padding: 16px; background: var(--bg); border-radius: 8px;">
+            Hey there! Just wanted to let you know your order is on its way!
+            We've handed it off to our shipping partner and you should see movement soon.
+            Order: OB-39481<br>
+            Items: 1x Ceramic Pour-Over Set (Matte Black) - $42.00<br>
+            Tracking: Will be emailed separately<br>
+            Thanks for shopping with us! 🖤
+          </div>
+        </div>
+        <div style="flex: 1; padding: 20px;">
+          <div style="font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">AI Parsed Result <span class="badge-status" style="background: var(--amber-bg); color: var(--amber); margin-left: 8px;">Confidence: 0.62</span></div>
+          <div style="font-size: 13px;">
+            <div style="margin-bottom: 12px;">
+              <div style="font-weight: 600; margin-bottom: 4px;">Classified as:</div>
+              <select style="padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px;">
+                <option>Shipment Confirmation</option>
+                <option>Order Confirmation</option>
+                <option>Shipment Update</option>
+              </select>
+            </div>
+            <div style="margin-bottom: 8px;"><span style="color: var(--text-muted);">Order #:</span> <input value="OB-39481" style="padding: 4px 8px; border: 1px solid var(--border); border-radius: 4px; font-size: 13px; width: 150px;" /></div>
+            <div style="margin-bottom: 8px;"><span style="color: var(--text-muted);">Retailer:</span> <input value="Obscure Brand" style="padding: 4px 8px; border: 1px solid var(--border); border-radius: 4px; font-size: 13px; width: 150px;" /></div>
+            <div style="margin-bottom: 8px;"><span style="color: var(--text-muted);">Product:</span> <input value="Ceramic Pour-Over Set (Matte Black)" style="padding: 4px 8px; border: 1px solid var(--border); border-radius: 4px; font-size: 13px; width: 280px;" /></div>
+            <div style="margin-bottom: 8px;"><span style="color: var(--text-muted);">Amount:</span> <input value="$42.00" style="padding: 4px 8px; border: 1px solid var(--border); border-radius: 4px; font-size: 13px; width: 100px;" /></div>
+            <div style="margin-bottom: 8px;"><span style="color: var(--text-muted);">Tracking:</span> <input value="" placeholder="Not provided" style="padding: 4px 8px; border: 1px solid var(--border); border-radius: 4px; font-size: 13px; width: 200px;" /></div>
+          </div>
+          <div style="display: flex; gap: 8px; margin-top: 16px;">
+            <button style="padding: 8px 20px; background: var(--green); color: #fff; border: none; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer;">✓ Approve & Save</button>
+            <button style="padding: 8px 20px; background: var(--card); color: var(--text-muted); border: 1px solid var(--border); border-radius: 8px; font-size: 13px; cursor: pointer;">Not Order-Related</button>
+            <button style="padding: 8px 20px; background: var(--card); color: var(--accent); border: 1px solid var(--border); border-radius: 8px; font-size: 13px; cursor: pointer;">↻ Reprocess</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div style="font-size: 13px; color: var(--text-muted);">3 more emails in review queue →</div>
+  </div>
+
+  <!-- ═══ SETTINGS ═══ -->
+  <div class="content page" id="page-settings">
+    <div class="section" style="max-width: 700px;">
+      <div class="section-header">Mailbox Configuration</div>
+      <div class="section-body">
+        <div style="margin-bottom: 20px;">
+          <div style="font-size: 12px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 6px;">Connected Mailbox</div>
+          <div style="display: flex; align-items: center; gap: 12px; padding: 14px; background: var(--green-bg); border-radius: 8px;">
+            <span style="color: var(--green); font-size: 18px;">✓</span>
+            <div>
+              <div style="font-weight: 600; font-size: 14px;">purchases@stevensettle.com</div>
+              <div style="font-size: 12px; color: var(--text-muted);">Azure Exchange · Last synced 2 minutes ago</div>
+            </div>
+          </div>
+        </div>
+        <div style="margin-bottom: 20px;">
+          <div style="font-size: 12px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 6px;">Sync Settings</div>
+          <div style="font-size: 13px; margin-bottom: 8px;">
+            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+              <input type="checkbox" checked /> Poll for new emails every 5 minutes
+            </label>
+          </div>
+          <div style="font-size: 13px;">
+            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+              <input type="checkbox" /> Enable webhook notifications (real-time, requires HTTPS)
+            </label>
+          </div>
+        </div>
+        <div style="margin-bottom: 20px;">
+          <div style="font-size: 12px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 6px;">Historical Import</div>
+          <div style="display: flex; gap: 12px; align-items: center;">
+            <select style="padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px;">
+              <option>Last 30 days</option>
+              <option>Last 90 days</option>
+              <option>Last 6 months</option>
+              <option>Last year</option>
+            </select>
+            <button style="padding: 8px 16px; background: var(--accent); color: #fff; border: none; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer;">Import Historical Emails</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="section" style="max-width: 700px;">
+      <div class="section-header">Notification Preferences</div>
+      <div class="section-body" style="font-size: 13px;">
+        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 8px 0;"><input type="checkbox" checked /> Delivery exceptions (missing, damaged)</label>
+        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 8px 0;"><input type="checkbox" checked /> Return deadline reminders (3 days before)</label>
+        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 8px 0;"><input type="checkbox" checked /> Overdue delivery alerts</label>
+        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 8px 0;"><input type="checkbox" /> Refund confirmation</label>
+        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 8px 0;"><input type="checkbox" /> Daily digest email</label>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function showPage(page) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+
+  const titles = {
+    dashboard: 'Dashboard',
+    orders: 'All Orders',
+    detail: 'Order Detail',
+    returns: 'Return Center',
+    'awaiting-refund': 'Awaiting Refund',
+    review: 'Review Queue',
+    settings: 'Settings'
+  };
+
+  document.getElementById('page-' + page).classList.add('active');
+  document.getElementById('page-title').textContent = titles[page] || page;
+
+  // Highlight nav
+  const navMap = { dashboard: 0, orders: 1, returns: 2, 'awaiting-refund': 3, review: 4, settings: 5, detail: 1 };
+  const navItems = document.querySelectorAll('.nav-item');
+  if (navItems[navMap[page]]) navItems[navMap[page]].classList.add('active');
+}
+</script>
+</body>
+</html>
