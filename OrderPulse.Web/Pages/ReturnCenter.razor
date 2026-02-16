@@ -1,0 +1,347 @@
+@page "/returns"
+@attribute [Authorize]
+
+<PageTitle>Return Center - OrderPulse</PageTitle>
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.5rem;">
+    <h2 style="font-size:1.5rem;font-weight:700;">Return Center</h2>
+    @if (_activeTab == "NeedToShip" && _returns.Count > 0)
+    {
+        <button class="print-btn" @onclick="PrintAllLabels">
+            &#x1F5A8; Print All Labels
+        </button>
+    }
+</div>
+
+<!-- Tabs -->
+<div class="return-tabs">
+    <button class="return-tab @ActiveTabClass("NeedToShip")" @onclick="() => SetTab(\"NeedToShip\")">
+        Need to Ship @CountBadge(_needToShipCount)
+    </button>
+    <button class="return-tab @ActiveTabClass("Shipped")" @onclick="() => SetTab(\"Shipped\")">
+        Shipped / In Transit
+    </button>
+    <button class="return-tab @ActiveTabClass("AwaitingRefund")" @onclick="() => SetTab(\"AwaitingRefund\")">
+        Awaiting Refund
+    </button>
+    <button class="return-tab @ActiveTabClass("Completed")" @onclick="() => SetTab(\"Completed\")">
+        Completed
+    </button>
+    <button class="return-tab @ActiveTabClass("Rejected")" @onclick="() => SetTab(\"Rejected\")">
+        Rejected
+    </button>
+</div>
+
+<!-- Return Cards -->
+@if (_loading)
+{
+    <div class="loading">Loading returns...</div>
+}
+else if (_returns.Count == 0)
+{
+    <div class="card" style="text-align:center;padding:3rem;">
+        <div style="font-size:2rem;margin-bottom:0.5rem;">&#x2705;</div>
+        <div class="text-muted">No returns in this category</div>
+    </div>
+}
+else
+{
+    <div class="return-cards-grid">
+        @foreach (var ret in _returns)
+        {
+            <div class="return-card">
+                <!-- Header -->
+                <div class="return-card-header">
+                    <div>
+                        <div class="font-semibold">@(ret.RetailerName ?? "Unknown")</div>
+                        <div class="text-xs text-muted">
+                            Order @(ret.ExternalOrderNumber ?? "N/A")
+                            @if (ret.RMANumber is not null) { <span> &middot; RMA: @ret.RMANumber</span> }
+                        </div>
+                    </div>
+                    @if (ret.ReturnByDate.HasValue && _activeTab == "NeedToShip")
+                    {
+                        <div class="deadline-badge @GetDeadlineClass(ret.ReturnByDate.Value)">
+                            @GetDeadlineText(ret.ReturnByDate.Value)
+                        </div>
+                    }
+                </div>
+
+                <!-- Items -->
+                <div class="return-card-items">
+                    @foreach (var item in ret.Items)
+                    {
+                        <div class="return-card-item">
+                            <span>@item.ProductName</span>
+                            @if (item.Quantity > 1) { <span class="text-muted text-xs">x@item.Quantity</span> }
+                        </div>
+                    }
+                    @if (ret.ReturnReason is not null)
+                    {
+                        <div class="text-xs text-muted mt-1">Reason: @ret.ReturnReason</div>
+                    }
+                </div>
+
+                <!-- QR Code / Label / Drop-off -->
+                @if (_activeTab == "NeedToShip")
+                {
+                    <div class="return-card-actions">
+                        @if (ret.QRCodeData is not null)
+                        {
+                            <div class="qr-placeholder">
+                                <div style="font-size:2rem;">&#x1F4F1;</div>
+                                <div class="text-xs">Scan QR at drop-off</div>
+                            </div>
+                        }
+
+                        @if (ret.DropOffLocation is not null)
+                        {
+                            <div class="dropoff-info">
+                                <div class="text-xs font-semibold">Drop off at:</div>
+                                <div class="text-sm">@ret.DropOffLocation</div>
+                                @if (ret.DropOffAddress is not null)
+                                {
+                                    <div class="text-xs text-muted">@ret.DropOffAddress</div>
+                                }
+                            </div>
+                        }
+
+                        @if (ret.ReturnCarrier is not null)
+                        {
+                            <div class="text-xs text-muted mt-1">
+                                Ship via @ret.ReturnCarrier
+                                @if (ret.ReturnTrackingUrl is not null)
+                                {
+                                    <span> &middot; </span>
+                                    <a href="@ret.ReturnTrackingUrl" target="_blank" style="color:var(--blue);">Track</a>
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+
+                <!-- Shipped tab: tracking info -->
+                @if (_activeTab == "Shipped" && ret.ReturnTrackingNumber is not null)
+                {
+                    <div class="return-card-actions">
+                        <div class="text-sm">
+                            @(ret.ReturnCarrier ?? "Carrier"):
+                            @if (ret.ReturnTrackingUrl is not null)
+                            {
+                                <a href="@ret.ReturnTrackingUrl" target="_blank" style="color:var(--blue);">@ret.ReturnTrackingNumber ↗</a>
+                            }
+                            else
+                            {
+                                @ret.ReturnTrackingNumber
+                            }
+                        </div>
+                    </div>
+                }
+
+                <!-- Rejected tab: reason -->
+                @if (_activeTab == "Rejected" && ret.RejectionReason is not null)
+                {
+                    <div class="return-card-actions" style="background:#fee2e2;border-radius:8px;padding:0.75rem;">
+                        <div class="text-xs font-semibold" style="color:var(--red);">Rejection reason:</div>
+                        <div class="text-sm">@ret.RejectionReason</div>
+                    </div>
+                }
+
+                <!-- Refund estimate -->
+                @if (ret.EstimatedRefundAmount.HasValue)
+                {
+                    <div class="return-card-footer">
+                        <span class="text-xs text-muted">Refund estimate</span>
+                        <span class="font-semibold">$@ret.EstimatedRefundAmount?.ToString("N2")</span>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+}
+
+<style>
+    .return-tabs {
+        display: flex;
+        gap: 0;
+        border-bottom: 2px solid var(--border);
+        margin-bottom: 1.5rem;
+    }
+    .return-tab {
+        padding: 0.75rem 1.25rem;
+        font-size: 0.875rem;
+        font-weight: 500;
+        color: var(--text-secondary);
+        background: none;
+        border: none;
+        cursor: pointer;
+        border-bottom: 2px solid transparent;
+        margin-bottom: -2px;
+        transition: all 0.15s;
+    }
+    .return-tab:hover { color: var(--text-primary); }
+    .return-tab.active { color: var(--blue); border-bottom-color: var(--blue); }
+
+    .return-cards-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+        gap: 1rem;
+    }
+    .return-card {
+        background: var(--card-bg);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        overflow: hidden;
+    }
+    .return-card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        padding: 1rem 1.25rem;
+        border-bottom: 1px solid var(--border);
+    }
+    .return-card-items { padding: 1rem 1.25rem; }
+    .return-card-item {
+        display: flex;
+        justify-content: space-between;
+        font-size: 0.875rem;
+        padding: 0.25rem 0;
+    }
+    .return-card-actions {
+        padding: 0.75rem 1.25rem;
+        border-top: 1px solid var(--border);
+        background: #f8fafc;
+    }
+    .return-card-footer {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.75rem 1.25rem;
+        border-top: 1px solid var(--border);
+        font-size: 0.875rem;
+    }
+
+    .deadline-badge {
+        font-size: 0.7rem;
+        font-weight: 600;
+        padding: 0.25rem 0.75rem;
+        border-radius: 999px;
+        white-space: nowrap;
+    }
+    .deadline-badge.urgent { background: #fee2e2; color: var(--red); }
+    .deadline-badge.warning { background: #fef3c7; color: #b45309; }
+    .deadline-badge.ok { background: #dcfce7; color: #15803d; }
+
+    .qr-placeholder {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 1rem;
+        border: 2px dashed var(--border);
+        border-radius: 8px;
+        text-align: center;
+        margin-bottom: 0.5rem;
+    }
+    .dropoff-info { margin-top: 0.5rem; }
+    .print-btn {
+        padding: 0.5rem 1rem;
+        background: var(--blue);
+        color: white;
+        border: none;
+        border-radius: 8px;
+        font-size: 0.875rem;
+        font-weight: 500;
+        cursor: pointer;
+    }
+    .print-btn:hover { opacity: 0.9; }
+</style>
+
+@code {
+    [Inject] private ReturnService ReturnSvc { get; set; } = default!;
+    [Inject] private NavigationManager Navigation { get; set; } = default!;
+
+    private List<ReturnCardDto> _returns = new();
+    private string _activeTab = "NeedToShip";
+    private bool _loading = true;
+    private int _needToShipCount = 0;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadReturnsAsync();
+    }
+
+    private async Task LoadReturnsAsync()
+    {
+        _loading = true;
+        StateHasChanged();
+
+        try
+        {
+            if (_activeTab == "NeedToShip")
+            {
+                _returns = await ReturnSvc.GetOpenLabelsAsync();
+                _needToShipCount = _returns.Count;
+                // Sort by deadline urgency
+                _returns = _returns
+                    .OrderBy(r => r.ReturnByDate ?? DateOnly.MaxValue)
+                    .ToList();
+            }
+            else
+            {
+                var statusFilter = _activeTab switch
+                {
+                    "Shipped" => "Shipped",
+                    "AwaitingRefund" => "Received,RefundPending",
+                    "Completed" => "Refunded,Closed",
+                    "Rejected" => "Rejected",
+                    _ => null
+                };
+
+                var (items, _) = await ReturnSvc.GetReturnsAsync(status: statusFilter);
+                _returns = items;
+            }
+        }
+        catch (Exception) { _returns = new(); }
+        finally { _loading = false; }
+    }
+
+    private async Task SetTab(string tab)
+    {
+        _activeTab = tab;
+        await LoadReturnsAsync();
+    }
+
+    private void PrintAllLabels()
+    {
+        // TODO: Generate combined PDF of all labels via API
+        // For now, could trigger browser print
+    }
+
+    private string ActiveTabClass(string tab) => _activeTab == tab ? "active" : "";
+
+    private static string CountBadge(int count) => count > 0 ? $" ({count})" : "";
+
+    private static string GetDeadlineClass(DateOnly date)
+    {
+        var daysLeft = (date.ToDateTime(TimeOnly.MinValue) - DateTime.UtcNow).TotalDays;
+        return daysLeft switch
+        {
+            <= 2 => "urgent",
+            <= 5 => "warning",
+            _ => "ok"
+        };
+    }
+
+    private static string GetDeadlineText(DateOnly date)
+    {
+        var daysLeft = (int)(date.ToDateTime(TimeOnly.MinValue) - DateTime.UtcNow).TotalDays;
+        return daysLeft switch
+        {
+            < 0 => "OVERDUE",
+            0 => "Due today",
+            1 => "1 day left",
+            _ => $"{daysLeft} days left"
+        };
+    }
+}

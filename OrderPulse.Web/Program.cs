@@ -32,5 +32,6 @@ builder.Services.AddMsalAuthentication(options =>
 // ── App Services ──
 builder.Services.AddScoped<DashboardService>();
 builder.Services.AddScoped<OrderService>();
+builder.Services.AddScoped<ReturnService>();
 
 await builder.Build().RunAsync();

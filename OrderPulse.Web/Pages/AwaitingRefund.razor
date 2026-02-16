@@ -1,0 +1,170 @@
+@page "/returns/awaiting-refund"
+@attribute [Authorize]
+
+<PageTitle>Awaiting Refund - OrderPulse</PageTitle>
+
+<h2 style="margin-bottom:1.5rem;font-size:1.5rem;font-weight:700;">Awaiting Refund</h2>
+
+<!-- Summary Banner -->
+@if (!_loading && _refunds.Count > 0)
+{
+    <div class="refund-summary-banner">
+        <div class="refund-summary-stat">
+            <div class="refund-summary-label">Pending Refunds</div>
+            <div class="refund-summary-value">@_refunds.Count</div>
+        </div>
+        <div class="refund-summary-stat">
+            <div class="refund-summary-label">Total Pending</div>
+            <div class="refund-summary-value">$@_totalPending.ToString("N2")</div>
+        </div>
+        <div class="refund-summary-stat">
+            <div class="refund-summary-label">Avg Wait</div>
+            <div class="refund-summary-value">@_avgDaysWaiting days</div>
+        </div>
+    </div>
+}
+
+<!-- Table -->
+<div class="card" style="padding:0;overflow:hidden;">
+    @if (_loading)
+    {
+        <div class="loading">Loading refunds...</div>
+    }
+    else if (_refunds.Count == 0)
+    {
+        <div style="text-align:center;padding:3rem;">
+            <div style="font-size:2rem;margin-bottom:0.5rem;">&#x2705;</div>
+            <div class="text-muted">No pending refunds — you're all caught up!</div>
+        </div>
+    }
+    else
+    {
+        <table class="orders-table">
+            <thead>
+                <tr>
+                    <th>Retailer</th>
+                    <th>Order #</th>
+                    <th>Items</th>
+                    <th>Refund Amount</th>
+                    <th>Days Waiting</th>
+                    <th>Expected</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var r in _refunds)
+                {
+                    <tr>
+                        <td class="font-semibold">@(r.RetailerName ?? "Unknown")</td>
+                        <td>
+                            <a href="/orders/@r.OrderId" style="color:var(--blue);text-decoration:none;">
+                                @(r.ExternalOrderNumber ?? "N/A")
+                            </a>
+                        </td>
+                        <td>
+                            @if (r.Items is not null && r.Items.Any())
+                            {
+                                @foreach (var item in r.Items)
+                                {
+                                    <div class="text-sm">@item.ProductName @(item.Quantity > 1 ? $"x{item.Quantity}" : "")</div>
+                                }
+                            }
+                            else
+                            {
+                                <span class="text-muted">—</span>
+                            }
+                        </td>
+                        <td class="font-semibold">
+                            @if (r.EstimatedRefundAmount.HasValue)
+                            {
+                                <span>$@r.EstimatedRefundAmount.Value.ToString("N2")</span>
+                            }
+                            else
+                            {
+                                <span class="text-muted">—</span>
+                            }
+                        </td>
+                        <td>
+                            @{ var days = GetDaysWaiting(r.ReceivedByRetailerDate); }
+                            <span class="wait-badge @GetWaitClass(days)">
+                                @days day@(days != 1 ? "s" : "")
+                            </span>
+                        </td>
+                        <td>
+                            @if (!string.IsNullOrEmpty(r.EstimatedRefundTimeline))
+                            {
+                                <span>@r.EstimatedRefundTimeline</span>
+                            }
+                            else
+                            {
+                                <span class="text-muted">No estimate</span>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</div>
+
+<style>
+    .refund-summary-banner {
+        display: flex;
+        gap: 2rem;
+        padding: 1.25rem 1.5rem;
+        background: linear-gradient(135deg, #eff6ff 0%, #f0fdf4 100%);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        margin-bottom: 1.5rem;
+    }
+    .refund-summary-stat { display: flex; flex-direction: column; gap: 0.25rem; }
+    .refund-summary-label { font-size: 0.75rem; font-weight: 500; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; }
+    .refund-summary-value { font-size: 1.5rem; font-weight: 700; color: var(--text-primary); }
+
+    .wait-badge {
+        font-size: 0.75rem;
+        font-weight: 600;
+        padding: 0.2rem 0.6rem;
+        border-radius: 999px;
+        white-space: nowrap;
+    }
+    .wait-badge.ok { background: #dcfce7; color: #15803d; }
+    .wait-badge.slow { background: #fef3c7; color: #b45309; }
+    .wait-badge.overdue { background: #fee2e2; color: var(--red); }
+</style>
+
+@code {
+    [Inject] private ReturnService ReturnSvc { get; set; } = default!;
+
+    private List<AwaitingRefundDto> _refunds = new();
+    private bool _loading = true;
+    private decimal _totalPending;
+    private int _avgDaysWaiting;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _loading = true;
+        try
+        {
+            _refunds = await ReturnSvc.GetAwaitingRefundAsync();
+            _totalPending = _refunds.Sum(r => r.EstimatedRefundAmount ?? 0m);
+            _avgDaysWaiting = _refunds.Count > 0
+                ? (int)_refunds.Average(r => GetDaysWaiting(r.ReceivedByRetailerDate))
+                : 0;
+        }
+        catch (Exception) { _refunds = new(); }
+        finally { _loading = false; }
+    }
+
+    private static int GetDaysWaiting(DateOnly? receivedDate)
+    {
+        if (!receivedDate.HasValue) return 0;
+        return (int)(DateTime.UtcNow - receivedDate.Value.ToDateTime(TimeOnly.MinValue)).TotalDays;
+    }
+
+    private static string GetWaitClass(int days) => days switch
+    {
+        <= 7 => "ok",
+        <= 14 => "slow",
+        _ => "overdue"
+    };
+}
