@@ -1,0 +1,115 @@
+@if (Events.Count == 0)
+{
+    <div class="text-muted text-sm" style="padding:0.5rem 0;">No events yet</div>
+}
+else
+{
+    <div class="timeline">
+        @foreach (var evt in Events.OrderByDescending(e => e.EventDate))
+        {
+            <div class="timeline-item">
+                <div class="timeline-marker @GetMarkerClass(evt.EventType)">
+                    <div class="timeline-dot"></div>
+                </div>
+                <div class="timeline-content">
+                    <div class="timeline-icon-row">
+                        <span class="timeline-event-icon">@GetIcon(evt.EventType)</span>
+                        <span class="font-semibold text-sm">@evt.Summary</span>
+                    </div>
+                    @if (evt.Details is not null)
+                    {
+                        <div class="text-xs text-muted mt-1">@evt.Details</div>
+                    }
+                    <div class="text-xs text-muted mt-1">@FormatDate(evt.EventDate)</div>
+                </div>
+            </div>
+        }
+    </div>
+}
+
+<style>
+    .timeline {
+        position: relative;
+        padding-left: 1.5rem;
+    }
+    .timeline::before {
+        content: '';
+        position: absolute;
+        left: 7px;
+        top: 0;
+        bottom: 0;
+        width: 2px;
+        background: var(--border);
+    }
+    .timeline-item {
+        position: relative;
+        display: flex;
+        gap: 0.75rem;
+        padding-bottom: 1.25rem;
+    }
+    .timeline-item:last-child { padding-bottom: 0; }
+    .timeline-marker {
+        position: absolute;
+        left: -1.5rem;
+        top: 2px;
+        z-index: 1;
+    }
+    .timeline-dot {
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        border: 2px solid var(--border);
+        background: white;
+    }
+    .timeline-marker.placed .timeline-dot { border-color: #6366f1; background: #e0e7ff; }
+    .timeline-marker.shipped .timeline-dot { border-color: var(--blue); background: #dbeafe; }
+    .timeline-marker.delivered .timeline-dot { border-color: var(--green); background: #dcfce7; }
+    .timeline-marker.exception .timeline-dot { border-color: var(--red); background: #fee2e2; }
+    .timeline-marker.return .timeline-dot { border-color: var(--orange); background: #fef3c7; }
+    .timeline-marker.refund .timeline-dot { border-color: var(--purple); background: #f3e8ff; }
+    .timeline-marker.cancelled .timeline-dot { border-color: #64748b; background: #f1f5f9; }
+    .timeline-content { padding-left: 0.5rem; }
+    .timeline-icon-row { display: flex; align-items: center; gap: 0.375rem; }
+    .timeline-event-icon { font-size: 0.875rem; }
+</style>
+
+@code {
+    [Parameter] public List<TimelineEvent> Events { get; set; } = new();
+
+    private static string GetMarkerClass(string eventType) =>
+        eventType switch
+        {
+            "OrderPlaced" => "placed",
+            "OrderModified" => "placed",
+            "ShipmentCreated" or "ShipmentUpdated" => "shipped",
+            "Delivered" => "delivered",
+            "DeliveryIssue" or "DeliveryException" => "exception",
+            var t when t.StartsWith("Return") => "return",
+            "RefundIssued" => "refund",
+            "OrderCancelled" => "cancelled",
+            "PaymentConfirmed" => "placed",
+            _ => "placed"
+        };
+
+    private static string GetIcon(string eventType) =>
+        eventType switch
+        {
+            "OrderPlaced" => "\U0001F4E6",
+            "OrderModified" => "\u270F",
+            "ShipmentCreated" => "\U0001F69A",
+            "ShipmentUpdated" => "\U0001F4CD",
+            "Delivered" => "\u2705",
+            "DeliveryIssue" or "DeliveryException" => "\u26A0",
+            "ReturnInitiated" or "ReturnReturnInitiation" => "\u21A9",
+            "ReturnReturnLabel" => "\U0001F3F7",
+            "ReturnReturnReceived" => "\U0001F4E5",
+            "ReturnReturnRejection" => "\u274C",
+            "RefundIssued" => "\U0001F4B0",
+            "OrderCancelled" => "\U0001F6AB",
+            "PaymentConfirmed" => "\U0001F4B3",
+            _ => "\U0001F4CB"
+        };
+
+    private static string FormatDate(DateTime date) =>
+        date.ToString("MMM d, yyyy 'at' h:mm tt");
+}

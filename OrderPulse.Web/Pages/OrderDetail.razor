@@ -1,0 +1,325 @@
+@page "/orders/{OrderId:guid}"
+@attribute [Authorize]
+
+<PageTitle>Order @(_order?.ExternalOrderNumber ?? "Detail") - OrderPulse</PageTitle>
+
+@if (_loading)
+{
+    <div class="loading">Loading order...</div>
+}
+else if (_order is null)
+{
+    <div class="loading">Order not found</div>
+}
+else
+{
+    <!-- Back link + Header -->
+    <div style="margin-bottom:1.5rem;">
+        <a href="/orders" style="font-size:0.875rem;color:var(--blue);text-decoration:none;">← Back to Orders</a>
+    </div>
+
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:2rem;">
+        <div>
+            <h2 style="font-size:1.5rem;font-weight:700;margin-bottom:0.25rem;">
+                Order @_order.ExternalOrderNumber
+            </h2>
+            <div class="text-sm text-muted">
+                @(_order.RetailerName ?? "Unknown retailer") &middot; @_order.OrderDate.ToString("MMMM d, yyyy")
+            </div>
+        </div>
+        <StatusBadge Status="@_order.Status" />
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 350px;gap:1.5rem;">
+        <!-- Left Column -->
+        <div>
+            <!-- Line Items -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <span class="card-title">Items (@_order.Lines.Count)</span>
+                </div>
+                <table class="orders-table">
+                    <thead>
+                        <tr>
+                            <th>Product</th>
+                            <th>Qty</th>
+                            <th>Price</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var line in _order.Lines)
+                        {
+                            <tr style="cursor:default;">
+                                <td>
+                                    <div style="display:flex;align-items:center;gap:0.75rem;">
+                                        @if (line.ImageUrl is not null)
+                                        {
+                                            <img src="@line.ImageUrl" alt="" style="width:40px;height:40px;border-radius:6px;object-fit:cover;" />
+                                        }
+                                        else
+                                        {
+                                            <div style="width:40px;height:40px;border-radius:6px;background:var(--content-bg);display:flex;align-items:center;justify-content:center;font-size:1.25rem;">&#x1F4E6;</div>
+                                        }
+                                        <div>
+                                            <div class="font-semibold">@line.ProductName</div>
+                                        </div>
+                                    </div>
+                                </td>
+                                <td>@line.Quantity</td>
+                                <td>@FormatCurrency(line.LineTotal ?? line.UnitPrice)</td>
+                                <td><StatusBadge Status="@line.Status" /></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Shipments -->
+            @if (_order.Shipments.Count > 0)
+            {
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <span class="card-title">Shipments (@_order.Shipments.Count)</span>
+                    </div>
+                    @foreach (var shipment in _order.Shipments)
+                    {
+                        <div style="padding:0.75rem 0;border-bottom:1px solid var(--border);">
+                            <div style="display:flex;justify-content:space-between;align-items:center;">
+                                <div>
+                                    <div class="font-semibold text-sm">@(shipment.Carrier ?? "Carrier")</div>
+                                    @if (shipment.TrackingNumber is not null)
+                                    {
+                                        @if (shipment.TrackingUrl is not null)
+                                        {
+                                            <a href="@shipment.TrackingUrl" target="_blank" rel="noopener"
+                                               style="font-size:0.8rem;color:var(--blue);text-decoration:none;">
+                                                @shipment.TrackingNumber ↗
+                                            </a>
+                                        }
+                                        else
+                                        {
+                                            <span class="text-xs text-muted">@shipment.TrackingNumber</span>
+                                        }
+                                    }
+                                </div>
+                                <div style="text-align:right;">
+                                    <StatusBadge Status="@shipment.Status" />
+                                    @if (shipment.EstimatedDelivery.HasValue)
+                                    {
+                                        <div class="text-xs text-muted mt-1">
+                                            ETA: @shipment.EstimatedDelivery.Value.ToString("MMM d")
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+
+            <!-- Returns -->
+            @if (_order.Returns.Count > 0)
+            {
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <span class="card-title">Returns (@_order.Returns.Count)</span>
+                    </div>
+                    @foreach (var ret in _order.Returns)
+                    {
+                        <div style="padding:0.75rem 0;border-bottom:1px solid var(--border);">
+                            <div style="display:flex;justify-content:space-between;align-items:center;">
+                                <div>
+                                    <div class="font-semibold text-sm">
+                                        @(ret.RMANumber is not null ? $"RMA: {ret.RMANumber}" : "Return")
+                                    </div>
+                                    @if (ret.ReturnReason is not null)
+                                    {
+                                        <div class="text-xs text-muted">@ret.ReturnReason</div>
+                                    }
+                                </div>
+                                <div style="text-align:right;">
+                                    <StatusBadge Status="@MapReturnStatus(ret.Status)" />
+                                    @if (ret.ReturnByDate.HasValue)
+                                    {
+                                        <div class="text-xs @(IsUrgent(ret.ReturnByDate.Value) ? "text-muted" : "text-muted") mt-1"
+                                             style="@(IsUrgent(ret.ReturnByDate.Value) ? "color:var(--red);font-weight:600;" : "")">
+                                            Return by: @ret.ReturnByDate.Value.ToString("MMM d")
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+
+            <!-- Refunds -->
+            @if (_order.Refunds.Count > 0)
+            {
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <span class="card-title">Refunds (@_order.Refunds.Count)</span>
+                    </div>
+                    @foreach (var refund in _order.Refunds)
+                    {
+                        <div style="padding:0.75rem 0;border-bottom:1px solid var(--border);">
+                            <div style="display:flex;justify-content:space-between;align-items:center;">
+                                <div>
+                                    <div class="font-semibold text-sm">@FormatCurrency(refund.RefundAmount)</div>
+                                    @if (refund.RefundMethod is not null)
+                                    {
+                                        <div class="text-xs text-muted">@refund.RefundMethod</div>
+                                    }
+                                </div>
+                                @if (refund.RefundDate.HasValue)
+                                {
+                                    <span class="text-xs text-muted">@refund.RefundDate.Value.ToString("MMM d, yyyy")</span>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+
+        <!-- Right Column -->
+        <div>
+            <!-- Price Breakdown -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <span class="card-title">Price Breakdown</span>
+                </div>
+                <div class="price-breakdown">
+                    @if (_order.Subtotal.HasValue)
+                    {
+                        <div class="price-row">
+                            <span>Subtotal</span>
+                            <span>@FormatCurrency(_order.Subtotal)</span>
+                        </div>
+                    }
+                    @if (_order.ShippingCost.HasValue)
+                    {
+                        <div class="price-row">
+                            <span>Shipping</span>
+                            <span>@(_order.ShippingCost == 0 ? "FREE" : FormatCurrency(_order.ShippingCost))</span>
+                        </div>
+                    }
+                    @if (_order.TaxAmount.HasValue)
+                    {
+                        <div class="price-row">
+                            <span>Tax</span>
+                            <span>@FormatCurrency(_order.TaxAmount)</span>
+                        </div>
+                    }
+                    @if (_order.DiscountAmount.HasValue && _order.DiscountAmount > 0)
+                    {
+                        <div class="price-row" style="color:var(--green);">
+                            <span>Discount</span>
+                            <span>-@FormatCurrency(_order.DiscountAmount)</span>
+                        </div>
+                    }
+                    <div class="price-row price-total">
+                        <span>Total</span>
+                        <span>@FormatCurrency(_order.TotalAmount)</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Order Info -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <span class="card-title">Details</span>
+                </div>
+                <div class="detail-list">
+                    @if (_order.PaymentMethodSummary is not null)
+                    {
+                        <div class="detail-row">
+                            <span class="text-muted">Payment</span>
+                            <span>@_order.PaymentMethodSummary</span>
+                        </div>
+                    }
+                    @if (_order.ShippingAddress is not null)
+                    {
+                        <div class="detail-row">
+                            <span class="text-muted">Ship to</span>
+                            <span>@_order.ShippingAddress</span>
+                        </div>
+                    }
+                    @if (_order.EstimatedDeliveryStart.HasValue || _order.EstimatedDeliveryEnd.HasValue)
+                    {
+                        <div class="detail-row">
+                            <span class="text-muted">Est. delivery</span>
+                            <span>@FormatDeliveryRange(_order.EstimatedDeliveryStart, _order.EstimatedDeliveryEnd)</span>
+                        </div>
+                    }
+                </div>
+            </div>
+
+            <!-- Timeline -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">Timeline</span>
+                </div>
+                <OrderTimeline Events="_timeline" />
+            </div>
+        </div>
+    </div>
+}
+
+<style>
+    .price-breakdown { display: flex; flex-direction: column; gap: 0.5rem; }
+    .price-row { display: flex; justify-content: space-between; font-size: 0.875rem; }
+    .price-total { border-top: 2px solid var(--border); padding-top: 0.5rem; margin-top: 0.25rem; font-weight: 700; font-size: 1rem; }
+    .detail-list { display: flex; flex-direction: column; gap: 0.75rem; }
+    .detail-row { display: flex; flex-direction: column; gap: 0.125rem; font-size: 0.875rem; }
+</style>
+
+@code {
+    [Parameter] public Guid OrderId { get; set; }
+    [Inject] private OrderService OrderSvc { get; set; } = default!;
+
+    private OrderDetail? _order;
+    private List<TimelineEvent> _timeline = new();
+    private bool _loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _order = await OrderSvc.GetOrderDetailAsync(OrderId);
+            if (_order is not null)
+            {
+                _timeline = await OrderSvc.GetTimelineAsync(OrderId);
+            }
+        }
+        catch (Exception) { }
+        finally { _loading = false; }
+    }
+
+    private static string FormatCurrency(decimal? amount) =>
+        amount.HasValue ? $"${amount:N2}" : "--";
+
+    private static string MapReturnStatus(string status) =>
+        status switch
+        {
+            "Initiated" or "LabelIssued" => "ReturnInProgress",
+            "Shipped" => "Shipped",
+            "Received" => "ReturnReceived",
+            "Rejected" => "DeliveryException",
+            "Refunded" or "RefundPending" => "Refunded",
+            _ => "ReturnInProgress"
+        };
+
+    private static bool IsUrgent(DateOnly date) =>
+        date.ToDateTime(TimeOnly.MinValue) - DateTime.UtcNow < TimeSpan.FromDays(3);
+
+    private static string FormatDeliveryRange(DateOnly? start, DateOnly? end)
+    {
+        if (start.HasValue && end.HasValue && start == end)
+            return start.Value.ToString("MMM d");
+        if (start.HasValue && end.HasValue)
+            return $"{start.Value.ToString("MMM d")} - {end.Value.ToString("MMM d")}";
+        return (end ?? start)?.ToString("MMM d") ?? "--";
+    }
+}
