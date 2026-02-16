@@ -1,0 +1,33 @@
+@{
+    var (cssClass, label) = GetBadgeInfo(Status);
+}
+
+<span class="badge @cssClass">
+    <span class="badge-dot"></span>
+    @label
+</span>
+
+@code {
+    [Parameter] public string Status { get; set; } = string.Empty;
+
+    private static (string CssClass, string Label) GetBadgeInfo(string status) =>
+        status switch
+        {
+            "Placed" => ("placed", "Placed"),
+            "PartiallyShipped" => ("shipped", "Partially Shipped"),
+            "Shipped" => ("shipped", "Shipped"),
+            "InTransit" => ("in-transit", "In Transit"),
+            "OutForDelivery" => ("out-for-delivery", "Out for Delivery"),
+            "PartiallyDelivered" => ("delivered", "Partially Delivered"),
+            "Delivered" => ("delivered", "Delivered"),
+            "DeliveryException" => ("exception", "Exception"),
+            "ReturnInProgress" => ("return", "Return in Progress"),
+            "ReturnReceived" => ("return", "Return Received"),
+            "Refunded" => ("refunded", "Refunded"),
+            "Cancelled" => ("cancelled", "Cancelled"),
+            "PartiallyCancelled" => ("cancelled", "Partially Cancelled"),
+            "Closed" => ("delivered", "Closed"),
+            "Inferred" => ("placed", "Inferred"),
+            _ => ("placed", status)
+        };
+}

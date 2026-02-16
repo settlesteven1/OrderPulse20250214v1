@@ -1,0 +1,72 @@
+@inherits LayoutComponentBase
+
+<div class="app-layout">
+    <nav class="sidebar">
+        <div class="sidebar-brand">OrderPulse</div>
+        <div class="sidebar-nav">
+            <NavLink href="" Match="NavLinkMatch.All">
+                <span class="nav-icon">&#x1F4CA;</span> Dashboard
+            </NavLink>
+            <NavLink href="orders">
+                <span class="nav-icon">&#x1F4E6;</span> All Orders
+            </NavLink>
+            <NavLink href="returns">
+                <span class="nav-icon">&#x21A9;</span> Return Center
+            </NavLink>
+            <NavLink href="review">
+                <span class="nav-icon">&#x1F50D;</span> Review Queue
+                @if (_reviewCount > 0)
+                {
+                    <span class="nav-badge">@_reviewCount</span>
+                }
+            </NavLink>
+            <NavLink href="settings">
+                <span class="nav-icon">&#x2699;</span> Settings
+            </NavLink>
+        </div>
+        <div style="padding: 1rem 1.5rem; border-top: 1px solid rgba(255,255,255,0.1);">
+            <AuthorizeView>
+                <Authorized>
+                    <div style="font-size: 0.8rem; color: #94a3b8;">
+                        @context.User.Identity?.Name
+                    </div>
+                    <button class="sidebar-nav" style="padding:0.5rem 0;font-size:0.8rem;color:#94a3b8;"
+                            @onclick="Logout">Sign out</button>
+                </Authorized>
+            </AuthorizeView>
+        </div>
+    </nav>
+
+    <div class="main-content">
+        <header class="topbar">
+            <div class="topbar-search">
+                <span>&#x1F50D;</span>
+                <input type="text" placeholder="Search orders, tracking numbers..." />
+            </div>
+            <div class="topbar-actions">
+                <AuthorizeView>
+                    <Authorized>
+                        <span class="text-sm text-muted">@context.User.Identity?.Name</span>
+                    </Authorized>
+                </AuthorizeView>
+            </div>
+        </header>
+
+        <main class="page-content">
+            @Body
+        </main>
+    </div>
+</div>
+
+@code {
+    [Inject] private NavigationManager Navigation { get; set; } = default!;
+    [Inject] private SignOutSessionStateManager SignOutManager { get; set; } = default!;
+
+    private int _reviewCount = 0;
+
+    private async Task Logout()
+    {
+        await SignOutManager.SetSignOutState();
+        Navigation.NavigateToLogout("authentication/logout");
+    }
+}

@@ -1,0 +1,178 @@
+@page "/"
+@attribute [Authorize]
+
+<PageTitle>Dashboard - OrderPulse</PageTitle>
+
+<!-- Status Cards -->
+<div class="status-grid">
+    <a href="/orders?shortcut=awaiting-delivery" class="status-card">
+        <div class="status-card-label">Awaiting Delivery</div>
+        <div class="status-card-value blue">@(_summary?.AwaitingDelivery ?? 0)</div>
+    </a>
+    <a href="/orders?shortcut=needs-attention" class="status-card">
+        <div class="status-card-label">Needs Attention</div>
+        <div class="status-card-value red">@(_summary?.NeedsAttention ?? 0)</div>
+    </a>
+    <a href="/returns" class="status-card">
+        <div class="status-card-label">Open Returns</div>
+        <div class="status-card-value orange">@(_summary?.OpenReturns ?? 0)</div>
+    </a>
+    <a href="/returns/awaiting-refund" class="status-card">
+        <div class="status-card-label">Awaiting Refund</div>
+        <div class="status-card-value purple">@(_summary?.AwaitingRefund ?? 0)</div>
+    </a>
+    <div class="status-card" style="cursor:default;">
+        <div class="status-card-label">Delivered This Week</div>
+        <div class="status-card-value green">@(_summary?.DeliveredThisWeek ?? 0)</div>
+    </div>
+</div>
+
+<!-- Main Content Grid -->
+<div class="dashboard-grid">
+    <!-- Activity Feed -->
+    <div class="card">
+        <div class="card-header">
+            <span class="card-title">Recent Activity</span>
+        </div>
+        @if (_loading)
+        {
+            <div class="loading">Loading...</div>
+        }
+        else if (_activity.Count == 0)
+        {
+            <div class="text-muted text-sm" style="padding:1rem 0;">No recent activity</div>
+        }
+        else
+        {
+            <ul class="activity-feed">
+                @foreach (var item in _activity)
+                {
+                    <li class="activity-item">
+                        <div class="activity-icon @GetActivityIconClass(item.EventType)">
+                            @GetActivityIcon(item.EventType)
+                        </div>
+                        <div>
+                            <div class="activity-text">@item.Summary</div>
+                            <div class="activity-time">@FormatTimeAgo(item.EventDate)</div>
+                        </div>
+                    </li>
+                }
+            </ul>
+        }
+    </div>
+
+    <!-- Needs Attention Panel -->
+    <div class="card">
+        <div class="card-header">
+            <span class="card-title">Needs Attention</span>
+        </div>
+        @if (_attentionItems.Count == 0)
+        {
+            <div class="text-muted text-sm" style="padding:1rem 0;">All clear!</div>
+        }
+        else
+        {
+            @foreach (var item in _attentionItems)
+            {
+                <div class="attention-item">
+                    <div>
+                        <div class="text-sm">@item.Summary</div>
+                        <div class="text-xs text-muted mt-1">@item.Details</div>
+                    </div>
+                    <span class="attention-tag @GetAttentionTagClass(item.EventType)">
+                        @GetAttentionTag(item.EventType)
+                    </span>
+                </div>
+            }
+        }
+    </div>
+</div>
+
+@code {
+    [Inject] private DashboardService DashboardSvc { get; set; } = default!;
+
+    private DashboardSummary? _summary;
+    private List<TimelineEvent> _activity = new();
+    private List<TimelineEvent> _attentionItems = new();
+    private bool _loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _summary = await DashboardSvc.GetSummaryAsync();
+            var allActivity = await DashboardSvc.GetRecentActivityAsync(20);
+
+            // Split into activity feed and attention items
+            _attentionItems = allActivity
+                .Where(a => a.EventType is "DeliveryIssue" or "DeliveryException"
+                    or "ReturnRejection" or "ManualReview")
+                .Take(5)
+                .ToList();
+
+            _activity = allActivity
+                .Where(a => !_attentionItems.Contains(a))
+                .Take(15)
+                .ToList();
+        }
+        catch (Exception)
+        {
+            // API not available — show empty state
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private static string GetActivityIconClass(string eventType) =>
+        eventType switch
+        {
+            "OrderPlaced" => "placed",
+            "ShipmentCreated" or "ShipmentUpdated" => "shipped",
+            "Delivered" => "delivered",
+            "DeliveryIssue" or "DeliveryException" => "exception",
+            var t when t.StartsWith("Return") => "return",
+            "RefundIssued" => "refund",
+            _ => "placed"
+        };
+
+    private static string GetActivityIcon(string eventType) =>
+        eventType switch
+        {
+            "OrderPlaced" => "\U0001F4E6",
+            "ShipmentCreated" or "ShipmentUpdated" => "\U0001F69A",
+            "Delivered" => "\u2705",
+            "DeliveryIssue" or "DeliveryException" => "\u26A0",
+            var t when t.StartsWith("Return") => "\u21A9",
+            "RefundIssued" => "\U0001F4B0",
+            _ => "\U0001F4CB"
+        };
+
+    private static string GetAttentionTagClass(string eventType) =>
+        eventType switch
+        {
+            "DeliveryIssue" or "DeliveryException" => "urgent",
+            "ReturnRejection" => "warning",
+            _ => "info"
+        };
+
+    private static string GetAttentionTag(string eventType) =>
+        eventType switch
+        {
+            "DeliveryIssue" or "DeliveryException" => "Urgent",
+            "ReturnRejection" => "Warning",
+            "ManualReview" => "Review",
+            _ => "Info"
+        };
+
+    private static string FormatTimeAgo(DateTime date)
+    {
+        var diff = DateTime.UtcNow - date;
+        if (diff.TotalMinutes < 1) return "just now";
+        if (diff.TotalMinutes < 60) return $"{(int)diff.TotalMinutes}m ago";
+        if (diff.TotalHours < 24) return $"{(int)diff.TotalHours}h ago";
+        if (diff.TotalDays < 7) return $"{(int)diff.TotalDays}d ago";
+        return date.ToString("MMM d");
+    }
+}

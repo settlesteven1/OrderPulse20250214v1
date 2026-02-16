@@ -1,0 +1,193 @@
+@page "/orders"
+@attribute [Authorize]
+
+<PageTitle>Orders - OrderPulse</PageTitle>
+
+<h2 style="margin-bottom:1.5rem;font-size:1.5rem;font-weight:700;">All Orders</h2>
+
+<!-- Filter Chips -->
+<div class="filter-bar">
+    <button class="filter-chip @ActiveChipClass(null)" @onclick="() => SetShortcut(null)">All Orders</button>
+    <button class="filter-chip @ActiveChipClass("awaiting-delivery")" @onclick="() => SetShortcut(\"awaiting-delivery\")">Awaiting Delivery</button>
+    <button class="filter-chip @ActiveChipClass("needs-attention")" @onclick="() => SetShortcut(\"needs-attention\")">Needs Attention</button>
+    <button class="filter-chip @ActiveChipClass("open-returns")" @onclick="() => SetShortcut(\"open-returns\")">Open Returns</button>
+    <button class="filter-chip @ActiveChipClass("awaiting-refund")" @onclick="() => SetShortcut(\"awaiting-refund\")">Awaiting Refund</button>
+    <button class="filter-chip @ActiveChipClass("recently-delivered")" @onclick="() => SetShortcut(\"recently-delivered\")">Recently Delivered</button>
+</div>
+
+<!-- Search -->
+<div style="display:flex;gap:1rem;margin-bottom:1.5rem;align-items:center;">
+    <div class="topbar-search" style="flex:1;max-width:400px;">
+        <span>&#x1F50D;</span>
+        <input type="text" placeholder="Search orders..." @bind="_search" @bind:event="oninput"
+               @onkeyup="HandleSearchKeyUp" />
+    </div>
+    <select style="padding:0.5rem 1rem;border:1px solid var(--border);border-radius:8px;font-size:0.875rem;"
+            @bind="_sortBy">
+        <option value="OrderDate">Date</option>
+        <option value="TotalAmount">Amount</option>
+        <option value="Status">Status</option>
+        <option value="Retailer">Retailer</option>
+    </select>
+    <button style="padding:0.5rem;border:1px solid var(--border);border-radius:8px;background:white;cursor:pointer;"
+            @onclick="ToggleSortDirection">
+        @(_sortDesc ? "\u2193" : "\u2191")
+    </button>
+</div>
+
+<!-- Orders Table -->
+<div class="card" style="padding:0;overflow:hidden;">
+    @if (_loading)
+    {
+        <div class="loading">Loading orders...</div>
+    }
+    else if (_orders.Count == 0)
+    {
+        <div class="loading">No orders found</div>
+    }
+    else
+    {
+        <table class="orders-table">
+            <thead>
+                <tr>
+                    <th>Order</th>
+                    <th>Retailer</th>
+                    <th>Date</th>
+                    <th>Items</th>
+                    <th>Total</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var order in _orders)
+                {
+                    <tr @onclick="() => NavigateToOrder(order.OrderId)">
+                        <td>
+                            <div class="font-semibold">@order.ExternalOrderNumber</div>
+                            @if (order.FirstItemName is not null)
+                            {
+                                <div class="text-xs text-muted mt-1">@Truncate(order.FirstItemName, 40)</div>
+                            }
+                        </td>
+                        <td>@(order.RetailerName ?? "Unknown")</td>
+                        <td>@order.OrderDate.ToString("MMM d, yyyy")</td>
+                        <td>@order.ItemCount item@(order.ItemCount != 1 ? "s" : "")</td>
+                        <td>@FormatCurrency(order.TotalAmount, order.Currency)</td>
+                        <td><StatusBadge Status="@order.Status" /></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+
+        <!-- Pagination -->
+        @if (_pagination is not null && _pagination.TotalPages > 1)
+        {
+            <div class="pagination" style="padding:1rem;">
+                <span>
+                    Showing @((_page - 1) * _pageSize + 1)–@Math.Min(_page * _pageSize, _pagination.TotalCount)
+                    of @_pagination.TotalCount
+                </span>
+                <div class="pagination-buttons">
+                    <button disabled="@(_page <= 1)" @onclick="PreviousPage">Previous</button>
+                    <button disabled="@(_page >= _pagination.TotalPages)" @onclick="NextPage">Next</button>
+                </div>
+            </div>
+        }
+    }
+</div>
+
+@code {
+    [Inject] private OrderService OrderSvc { get; set; } = default!;
+    [Inject] private NavigationManager Navigation { get; set; } = default!;
+
+    [SupplyParameterFromQuery] public string? Shortcut { get; set; }
+
+    private List<OrderListItem> _orders = new();
+    private PaginationMeta? _pagination;
+    private bool _loading = true;
+
+    private string? _activeShortcut;
+    private string _search = "";
+    private string _sortBy = "OrderDate";
+    private bool _sortDesc = true;
+    private int _page = 1;
+    private int _pageSize = 25;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _activeShortcut = Shortcut;
+        await LoadOrdersAsync();
+    }
+
+    private async Task LoadOrdersAsync()
+    {
+        _loading = true;
+        StateHasChanged();
+
+        try
+        {
+            var (items, pagination) = await OrderSvc.GetOrdersAsync(
+                shortcut: _activeShortcut,
+                search: string.IsNullOrWhiteSpace(_search) ? null : _search,
+                page: _page,
+                pageSize: _pageSize,
+                sort: _sortBy,
+                desc: _sortDesc);
+
+            _orders = items;
+            _pagination = pagination;
+        }
+        catch (Exception)
+        {
+            _orders = new();
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task SetShortcut(string? shortcut)
+    {
+        _activeShortcut = shortcut;
+        _page = 1;
+        await LoadOrdersAsync();
+    }
+
+    private async Task HandleSearchKeyUp(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            _page = 1;
+            await LoadOrdersAsync();
+        }
+    }
+
+    private async Task ToggleSortDirection()
+    {
+        _sortDesc = !_sortDesc;
+        await LoadOrdersAsync();
+    }
+
+    private async Task PreviousPage()
+    {
+        if (_page > 1) { _page--; await LoadOrdersAsync(); }
+    }
+
+    private async Task NextPage()
+    {
+        if (_pagination is not null && _page < _pagination.TotalPages) { _page++; await LoadOrdersAsync(); }
+    }
+
+    private void NavigateToOrder(Guid orderId) =>
+        Navigation.NavigateTo($"/orders/{orderId}");
+
+    private string ActiveChipClass(string? shortcut) =>
+        _activeShortcut == shortcut ? "active" : "";
+
+    private static string FormatCurrency(decimal? amount, string currency) =>
+        amount.HasValue ? $"${amount:N2}" : "--";
+
+    private static string Truncate(string text, int max) =>
+        text.Length <= max ? text : text[..max] + "...";
+}
