@@ -2,6 +2,7 @@ using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using Microsoft.EntityFrameworkCore;
 using OrderPulse.Infrastructure.Data;
+using OrderPulse.Infrastructure.Services;
 using OrderPulse.Domain.Entities;
 using OrderPulse.Domain.Enums;
 using Azure.Messaging.ServiceBus;
@@ -18,16 +19,21 @@ public class EmailPollingFunction
     private readonly ILogger<EmailPollingFunction> _logger;
     private readonly OrderPulseDbContext _db;
     private readonly ServiceBusClient _serviceBus;
-    // private readonly GraphServiceClient _graphClient; // TODO: inject configured Graph client
+    private readonly GraphMailService _graphMail;
+    private readonly EmailBlobStorageService _blobStorage;
 
     public EmailPollingFunction(
         ILogger<EmailPollingFunction> logger,
         OrderPulseDbContext db,
-        ServiceBusClient serviceBus)
+        ServiceBusClient serviceBus,
+        GraphMailService graphMail,
+        EmailBlobStorageService blobStorage)
     {
         _logger = logger;
         _db = db;
         _serviceBus = serviceBus;
+        _graphMail = graphMail;
+        _blobStorage = blobStorage;
     }
 
     [Function("EmailPollingFunction")]
@@ -69,63 +75,96 @@ public class EmailPollingFunction
         ServiceBusSender sender,
         CancellationToken ct)
     {
-        // TODO: Use Graph API to fetch new messages since tenant.LastSyncAt
-        //
-        // var messages = await _graphClient.Users[tenant.PurchaseMailbox]
-        //     .Messages
-        //     .GetAsync(config =>
-        //     {
-        //         config.QueryParameters.Filter =
-        //             $"receivedDateTime ge {tenant.LastSyncAt:yyyy-MM-ddTHH:mm:ssZ}";
-        //         config.QueryParameters.Select = new[]
-        //         {
-        //             "id", "from", "subject", "receivedDateTime",
-        //             "body", "bodyPreview", "hasAttachments", "internetMessageId"
-        //         };
-        //         config.QueryParameters.Top = 50;
-        //         config.QueryParameters.Orderby = new[] { "receivedDateTime asc" };
-        //     }, ct);
-        //
-        // foreach (var msg in messages.Value)
-        // {
-        //     // Check for duplicates
-        //     var exists = await _db.EmailMessages
-        //         .IgnoreQueryFilters() // Need to bypass tenant filter here
-        //         .AnyAsync(e => e.TenantId == tenant.TenantId && e.GraphMessageId == msg.Id, ct);
-        //     if (exists) continue;
-        //
-        //     // Store body in Blob Storage
-        //     var blobUrl = await StoreBlobAsync(tenant.TenantId, msg.Id, msg.Body.Content, ct);
-        //
-        //     // Create EmailMessage record
-        //     var email = new EmailMessage
-        //     {
-        //         TenantId = tenant.TenantId,
-        //         GraphMessageId = msg.Id,
-        //         InternetMessageId = msg.InternetMessageId,
-        //         FromAddress = msg.From.EmailAddress.Address,
-        //         FromDisplayName = msg.From.EmailAddress.Name,
-        //         Subject = msg.Subject,
-        //         ReceivedAt = msg.ReceivedDateTime.Value.UtcDateTime,
-        //         BodyBlobUrl = blobUrl,
-        //         BodyPreview = msg.BodyPreview?.Substring(0, Math.Min(500, msg.BodyPreview.Length)),
-        //         HasAttachments = msg.HasAttachments ?? false,
-        //         ProcessingStatus = ProcessingStatus.Pending
-        //     };
-        //     _db.EmailMessages.Add(email);
-        //     await _db.SaveChangesAsync(ct);
-        //
-        //     // Publish to Service Bus for async processing
-        //     var sbMsg = new ServiceBusMessage(email.EmailMessageId.ToString());
-        //     sbMsg.ApplicationProperties["TenantId"] = tenant.TenantId.ToString();
-        //     await sender.SendMessageAsync(sbMsg, ct);
-        // }
-        //
-        // // Update last sync time
-        // tenant.LastSyncAt = DateTime.UtcNow;
-        // await _db.SaveChangesAsync(ct);
+        if (string.IsNullOrEmpty(tenant.PurchaseMailbox))
+        {
+            _logger.LogWarning("Tenant {tenantId} has no purchase mailbox configured", tenant.TenantId);
+            return;
+        }
 
-        _logger.LogInformation("Polled mailbox for tenant {tenantId}: {mailbox}",
-            tenant.TenantId, tenant.PurchaseMailbox);
+        _logger.LogInformation("Polling mailbox {mailbox} for tenant {tenantId} (since {since})",
+            tenant.PurchaseMailbox, tenant.TenantId, tenant.LastSyncAt);
+
+        // Fetch new messages from Graph API
+        var messages = await _graphMail.GetNewMessagesAsync(
+            tenant.PurchaseMailbox, tenant.LastSyncAt, ct);
+
+        if (messages.Count == 0)
+        {
+            _logger.LogInformation("No new messages for tenant {tenantId}", tenant.TenantId);
+            return;
+        }
+
+        var newCount = 0;
+
+        foreach (var msg in messages)
+        {
+            if (msg.Id is null) continue;
+
+            // Deduplication by Graph message ID
+            var exists = await _db.EmailMessages
+                .IgnoreQueryFilters() // Bypass tenant filter for cross-tenant dedup check
+                .AnyAsync(e => e.TenantId == tenant.TenantId && e.GraphMessageId == msg.Id, ct);
+
+            if (exists)
+            {
+                _logger.LogDebug("Skipping duplicate message {graphId}", msg.Id);
+                continue;
+            }
+
+            try
+            {
+                // Store body in Blob Storage
+                var bodyContent = msg.Body?.Content ?? "";
+                var blobUrl = await _blobStorage.StoreEmailBodyAsync(
+                    tenant.TenantId, msg.Id, bodyContent, ct);
+
+                // Create EmailMessage record
+                var email = new EmailMessage
+                {
+                    EmailMessageId = Guid.NewGuid(),
+                    TenantId = tenant.TenantId,
+                    GraphMessageId = msg.Id,
+                    InternetMessageId = msg.InternetMessageId,
+                    FromAddress = msg.From?.EmailAddress?.Address ?? "unknown",
+                    FromDisplayName = msg.From?.EmailAddress?.Name,
+                    Subject = msg.Subject ?? "(no subject)",
+                    ReceivedAt = msg.ReceivedDateTime?.UtcDateTime ?? DateTime.UtcNow,
+                    BodyBlobUrl = blobUrl,
+                    BodyPreview = TruncatePreview(msg.BodyPreview, 500),
+                    HasAttachments = msg.HasAttachments ?? false,
+                    ProcessingStatus = ProcessingStatus.Pending
+                };
+
+                _db.EmailMessages.Add(email);
+                await _db.SaveChangesAsync(ct);
+
+                // Publish to Service Bus for async processing
+                var sbMsg = new ServiceBusMessage(email.EmailMessageId.ToString());
+                sbMsg.ApplicationProperties["TenantId"] = tenant.TenantId.ToString();
+                await sender.SendMessageAsync(sbMsg, ct);
+
+                newCount++;
+                _logger.LogDebug("Ingested message {graphId} as {emailId}", msg.Id, email.EmailMessageId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to ingest message {graphId} for tenant {tenantId}",
+                    msg.Id, tenant.TenantId);
+                // Continue with next message — don't let one failure block the batch
+            }
+        }
+
+        // Update last sync time
+        tenant.LastSyncAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+
+        _logger.LogInformation("Polled mailbox for tenant {tenantId}: {new} new of {total} messages",
+            tenant.TenantId, newCount, messages.Count);
+    }
+
+    private static string? TruncatePreview(string? preview, int maxLength)
+    {
+        if (string.IsNullOrEmpty(preview)) return null;
+        return preview.Length <= maxLength ? preview : preview[..maxLength];
     }
 }
