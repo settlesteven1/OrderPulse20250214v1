@@ -6,9 +6,9 @@ using OrderPulse.Infrastructure.Data;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// ── Authentication (Azure AD B2C) ──
+// ── Authentication (Microsoft Entra External ID) ──
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddMicrosoftIdentityWebApi(builder.Configuration.GetSection("AzureAdB2C"));
+    .AddMicrosoftIdentityWebApi(builder.Configuration.GetSection("AzureEntraId"));
 
 // ── Database ──
 builder.Services.AddHttpContextAccessor();
@@ -60,5 +60,13 @@ app.UseCors();
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
+
+// ── Health check (no auth required) ──
+app.MapGet("/health", () => Results.Ok(new
+{
+    status = "healthy",
+    service = "OrderPulse API",
+    timestamp = DateTime.UtcNow
+}));
 
 app.Run();

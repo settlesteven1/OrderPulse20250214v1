@@ -131,14 +131,14 @@ Create `appsettings.Development.json` in the Api project (gitignored):
   "ConnectionStrings": {
     "OrderPulseDb": "Server=localhost;Database=OrderPulse;Trusted_Connection=True;TrustServerCertificate=True;"
   },
-  "AzureAdB2C": {
-    "Instance": "https://orderpulse.b2clogin.com/",
+  "AzureEntraId": {
+    "Instance": "https://login.microsoftonline.com/",
     "ClientId": "<your-client-id>",
-    "Domain": "orderpulse.onmicrosoft.com",
-    "SignUpSignInPolicyId": "B2C_1_signup_signin"
+    "TenantId": "<your-tenant-id>"
   },
   "AzureOpenAI": {
-    "Endpoint": "https://aoai-orderpulse.openai.azure.com/",
+    "ClassifierEndpoint": "<your-classifier-endpoint>",
+    "ParserEndpoint": "<your-parser-endpoint>",
     "ApiKey": "<from-key-vault>",
     "ClassifierDeployment": "orderpulse-classifier",
     "ParserDeployment": "orderpulse-parser"

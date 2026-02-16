@@ -8,7 +8,7 @@
 # Requires: gh cli (https://cli.github.com/) authenticated
 # ============================================================================
 
-REPO="settlesteven1/OrderPulse"
+REPO="settlesteven1/OrderPulse20250214v1"
 
 echo "Creating GitHub Issues for OrderPulse..."
 echo "Repo: $REPO"
@@ -33,7 +33,7 @@ gh label create "phase:3-ui" --repo "$REPO" --color "006b75" --description "Phas
 gh label create "phase:4-multi-tenant" --repo "$REPO" --color "006b75" --description "Phase 4: Multi-Tenant (Weeks 8-10)" --force
 echo ""
 
-# ── MILESTONE ──
+# ── MILESTONES ──
 echo "Creating milestones..."
 gh api repos/$REPO/milestones -f title="Phase 1: Foundation" -f description="Azure infra, DB schema, Graph API, basic email ingestion" -f due_on="2026-03-08T00:00:00Z" 2>/dev/null
 gh api repos/$REPO/milestones -f title="Phase 2: AI Parsing" -f description="All 7 parsing agents, order matching, state machine, queues" -f due_on="2026-03-22T00:00:00Z" 2>/dev/null
@@ -42,24 +42,22 @@ gh api repos/$REPO/milestones -f title="Phase 4: Multi-Tenant & Polish" -f descr
 echo ""
 
 # ════════════════════════════════════════════════════════════════════
-# INFRASTRUCTURE ISSUES (Azure Setup — things Steven does manually)
+# INFRASTRUCTURE ISSUES (Azure Setup)
 # ════════════════════════════════════════════════════════════════════
 echo "Creating infrastructure issues..."
 
-gh issue create --repo "$REPO" --title "Create Azure Resource Group" \
-  --label "infrastructure,priority:high,phase:1-foundation" \
-  --milestone "Phase 1: Foundation" \
-  --body "$(cat <<'EOF'
+# --- Issue: Create Azure Resource Group ---
+BODY=$(cat <<'ISSUE_EOF'
 ## Task
 Create the resource group that will contain all OrderPulse resources.
 
 ## Steps
 1. Log into [Azure Portal](https://portal.azure.com)
-2. Navigate to **Resource Groups** → **Create**
+2. Navigate to **Resource Groups** > **Create**
 3. Name: `rg-orderpulse-prod`
 4. Region: **East US 2** (cost-optimized)
 5. Tags: `project=OrderPulse`, `environment=production`
-6. Click **Review + Create** → **Create**
+6. Click **Review + Create** > **Create**
 
 ## Acceptance Criteria
 - [ ] Resource group `rg-orderpulse-prod` exists in East US 2
@@ -67,18 +65,20 @@ Create the resource group that will contain all OrderPulse resources.
 
 ## Estimated Time
 5 minutes
-EOF
-)"
-
-gh issue create --repo "$REPO" --title "Provision Azure SQL Database" \
-  --label "infrastructure,database,priority:high,phase:1-foundation" \
+ISSUE_EOF
+)
+gh issue create --repo "$REPO" --title "Create Azure Resource Group" \
+  --label "infrastructure,priority:high,phase:1-foundation" \
   --milestone "Phase 1: Foundation" \
-  --body "$(cat <<'EOF'
+  --body "$BODY"
+
+# --- Issue: Provision Azure SQL Database ---
+BODY=$(cat <<'ISSUE_EOF'
 ## Task
 Provision the Azure SQL server and database for all OrderPulse data.
 
 ## Steps
-1. Navigate to **Azure SQL** → **Create**
+1. Navigate to **Azure SQL** > **Create**
 2. Select **Single database**
 3. Create new SQL Server:
    - Name: `sql-orderpulse-prod`
@@ -86,7 +86,7 @@ Provision the Azure SQL server and database for all OrderPulse data.
    - Region: East US 2
 4. Database settings:
    - Name: `sqldb-orderpulse`
-   - Tier: **Basic (5 DTU, 2GB)** — sufficient for up to ~50 users
+   - Tier: **Basic (5 DTU, 2GB)** -- sufficient for up to ~50 users
    - Backup redundancy: Locally-redundant
 5. Networking:
    - Allow Azure services: **Yes**
@@ -111,25 +111,27 @@ Provision the Azure SQL server and database for all OrderPulse data.
 
 ## Cost
 ~$5/month
-EOF
-)"
-
-gh issue create --repo "$REPO" --title "Create Azure Storage Account" \
-  --label "infrastructure,priority:high,phase:1-foundation" \
+ISSUE_EOF
+)
+gh issue create --repo "$REPO" --title "Provision Azure SQL Database" \
+  --label "infrastructure,database,priority:high,phase:1-foundation" \
   --milestone "Phase 1: Foundation" \
-  --body "$(cat <<'EOF'
+  --body "$BODY"
+
+# --- Issue: Create Azure Storage Account ---
+BODY=$(cat <<'ISSUE_EOF'
 ## Task
 Create blob storage for raw emails, return labels, QR codes, and attachments.
 
 ## Steps
-1. Navigate to **Storage Accounts** → **Create**
-2. Name: `storderpulse` (must be globally unique — adjust if taken)
+1. Navigate to **Storage Accounts** > **Create**
+2. Name: `storderpulse` (must be globally unique -- adjust if taken)
 3. Performance: **Standard**
 4. Redundancy: **LRS** (locally redundant)
 5. Access tier: **Hot**
 6. After creation, create containers:
-   - `emails` — for raw email body HTML
-   - `assets` — for return labels, QR codes, delivery photos
+   - `emails` -- for raw email body HTML
+   - `assets` -- for return labels, QR codes, delivery photos
 
 ## Acceptance Criteria
 - [ ] Storage account created
@@ -141,31 +143,39 @@ Create blob storage for raw emails, return labels, QR codes, and attachments.
 
 ## Cost
 ~$2-5/month
-EOF
-)"
-
-gh issue create --repo "$REPO" --title "Provision Azure OpenAI Service and Deploy Models" \
-  --label "infrastructure,ai,priority:high,phase:1-foundation" \
+ISSUE_EOF
+)
+gh issue create --repo "$REPO" --title "Create Azure Storage Account" \
+  --label "infrastructure,priority:high,phase:1-foundation" \
   --milestone "Phase 1: Foundation" \
-  --body "$(cat <<'EOF'
+  --body "$BODY"
+
+# --- Issue: Create Azure AI Foundry Project and Deploy Models ---
+BODY=$(cat <<'ISSUE_EOF'
 ## Task
-Set up Azure OpenAI with GPT-4o and GPT-4o-mini deployments for email classification and parsing.
+Set up an Azure AI Foundry project with GPT-4o and GPT-4o-mini model deployments for email classification and parsing.
 
 ## Steps
-1. Navigate to **Azure OpenAI** → **Create**
-2. Name: `aoai-orderpulse`
-3. Region: **East US 2**
-4. Pricing: **Standard S0**
-5. After provisioning, open **Azure OpenAI Studio**
-6. Deploy models:
-   - **GPT-4o** → deployment name: `orderpulse-classifier`
+1. Navigate to [Azure AI Foundry](https://ai.azure.com)
+2. Create a new **Hub** (if you do not already have one):
+   - Name: `aihub-orderpulse`
+   - Region: **East US 2**
+   - Resource group: `rg-orderpulse-prod`
+3. Create a new **Project** inside the hub:
+   - Name: `orderpulse`
+4. Go to **Model catalog** > **Model deployments** > **Deploy model**
+5. Deploy two models:
+   - **GPT-4o** > deployment name: `orderpulse-classifier`
      - Used for: email classification and complex parsing (orders, shipments, returns)
-   - **GPT-4o-mini** → deployment name: `orderpulse-parser`
+   - **GPT-4o-mini** > deployment name: `orderpulse-parser`
      - Used for: pre-filtering, simple parsing (deliveries, refunds, payments, cancellations)
-7. Note the **Endpoint URL** and **API Key** from Keys and Endpoint section
+6. Note the **Endpoint URL** and **API Key** from the deployment details page
+
+## Note
+The `Azure.AI.OpenAI` NuGet package works with AI Foundry endpoints. The deployment names act as aliases -- you can repoint them to newer models later without code changes.
 
 ## Acceptance Criteria
-- [ ] Azure OpenAI resource `aoai-orderpulse` created
+- [ ] AI Foundry hub and project created
 - [ ] `orderpulse-classifier` deployment (GPT-4o) active
 - [ ] `orderpulse-parser` deployment (GPT-4o-mini) active
 - [ ] Endpoint URL and API key saved (will go to Key Vault)
@@ -175,26 +185,28 @@ Set up Azure OpenAI with GPT-4o and GPT-4o-mini deployments for email classifica
 
 ## Cost
 ~$5-25/month (usage-based, estimated ~$2.14/user/month)
-EOF
-)"
-
-gh issue create --repo "$REPO" --title "Create Azure Service Bus Namespace and Queues" \
-  --label "infrastructure,priority:high,phase:1-foundation" \
+ISSUE_EOF
+)
+gh issue create --repo "$REPO" --title "Create Azure AI Foundry Project and Deploy Models" \
+  --label "infrastructure,ai,priority:high,phase:1-foundation" \
   --milestone "Phase 1: Foundation" \
-  --body "$(cat <<'EOF'
+  --body "$BODY"
+
+# --- Issue: Create Azure Service Bus ---
+BODY=$(cat <<'ISSUE_EOF'
 ## Task
 Set up the message queuing infrastructure for the email processing pipeline.
 
 ## Steps
-1. Navigate to **Service Bus** → **Create**
+1. Navigate to **Service Bus** > **Create**
 2. Name: `sb-orderpulse`
 3. Tier: **Basic**
 4. Region: East US 2
 5. After creation, create queues:
-   - `emails-pending` — newly ingested emails awaiting classification
+   - `emails-pending` -- newly ingested emails awaiting classification
      - Enable duplicate detection: **Yes**, window: 5 minutes
-   - `emails-classified` — classified emails awaiting parsing
-   - `emails-deadletter` — failed messages after 3 retries
+   - `emails-classified` -- classified emails awaiting parsing
+   - `emails-deadletter` -- failed messages after 3 retries
 
 ## Acceptance Criteria
 - [ ] Service Bus namespace `sb-orderpulse` created
@@ -206,108 +218,120 @@ Set up the message queuing infrastructure for the email processing pipeline.
 
 ## Cost
 ~$0.05/million operations
-EOF
-)"
-
-gh issue create --repo "$REPO" --title "Set Up Azure AD B2C Tenant" \
-  --label "infrastructure,auth,priority:high,phase:1-foundation" \
+ISSUE_EOF
+)
+gh issue create --repo "$REPO" --title "Create Azure Service Bus Namespace and Queues" \
+  --label "infrastructure,priority:high,phase:1-foundation" \
   --milestone "Phase 1: Foundation" \
-  --body "$(cat <<'EOF'
+  --body "$BODY"
+
+# --- Issue: Set Up Microsoft Entra External ID ---
+BODY=$(cat <<'ISSUE_EOF'
 ## Task
-Create the identity provider for user authentication.
+Configure Microsoft Entra External ID for user authentication. This is set up within your existing **rysetechnologies** Entra tenant.
 
 ## Steps
-1. Navigate to **Azure AD B2C** → **Create new B2C tenant**
-2. Tenant name: `orderpulse` (will be `orderpulse.onmicrosoft.com`)
-3. Region: United States
-4. After creation, switch to the B2C tenant and:
-5. **App registrations** → Register new app:
+1. Go to [Microsoft Entra admin center](https://entra.microsoft.com)
+2. Navigate to **External Identities** > **External collaboration settings**
+   - Ensure external user sign-up is enabled
+3. **App registrations** > **New registration**:
    - Name: `OrderPulse Web`
-   - Redirect URI: `https://app.orderpulse.stevensettle.com/authentication/login-callback`
-   - Also add: `https://localhost:5001/authentication/login-callback` (dev)
-   - Enable **ID tokens** and **Access tokens**
-6. **Identity providers** → Add **Microsoft Account** as social provider
-7. **User flows** → Create:
-   - Name: `B2C_1_signup_signin`
-   - Type: Sign up and sign in
-   - Identity providers: Microsoft Account
-   - User attributes to collect: Display Name, Email
-8. **User attributes** → Add custom attributes:
-   - `TenantId` (String)
-   - `PurchaseMailbox` (String)
+   - Supported account types: **Accounts in any organizational directory and personal Microsoft accounts**
+   - Redirect URI type: **SPA**
+   - Redirect URI: `https://app.orderpulse.rysetechnologies.com/authentication/login-callback`
+4. After registration, go to **Authentication** blade:
+   - Click **Add URI** and add: `https://localhost:5001/authentication/login-callback` (dev)
+   - Under **Implicit grant and hybrid flows**, enable **ID tokens** and **Access tokens**
+5. Note the **Application (client) ID** and **Directory (tenant) ID**
+
+## Notes
+- User flows are not needed -- Blazor WASM with MSAL handles the sign-in/sign-up UI and token flow directly
+- Custom attributes (TenantId, PurchaseMailbox) are handled in the OrderPulse database, not as directory attributes
+- The SPA redirect type uses authorization code flow with PKCE (recommended for browser apps)
 
 ## Acceptance Criteria
-- [ ] B2C tenant `orderpulse.onmicrosoft.com` created
-- [ ] Web app registered with correct redirect URIs
-- [ ] Microsoft Account identity provider configured
-- [ ] Sign-up/sign-in user flow created
-- [ ] Custom attributes added
-
-## Estimated Time
-20 minutes
-
-## Cost
-Free (up to 50K authentications/month)
-EOF
-)"
-
-gh issue create --repo "$REPO" --title "Register Microsoft Graph API App" \
-  --label "infrastructure,email,auth,priority:high,phase:1-foundation" \
-  --milestone "Phase 1: Foundation" \
-  --body "$(cat <<'EOF'
-## Task
-Register the app that will access Exchange Online mailboxes via Microsoft Graph API.
-
-## Steps
-1. In your **main Azure AD tenant** (stevensettle.com — NOT the B2C tenant):
-2. **App registrations** → **New registration**
-   - Name: `OrderPulse Mail Connector`
-   - Supported account types: Accounts in any organizational directory and personal Microsoft accounts
-   - Redirect URI: `https://app.orderpulse.stevensettle.com/mailbox/callback`
-3. **API permissions** → Add:
-   - Microsoft Graph → Delegated: `Mail.Read`, `Mail.ReadBasic`, `User.Read`
-4. **Certificates & secrets** → New client secret:
-   - Description: `OrderPulse Production`
-   - Expiry: 12 months (set calendar reminder to rotate!)
-   - **Save the secret value immediately** — it's only shown once
-5. Note: Client ID, Tenant ID, Client Secret → all go to Key Vault
-
-## Acceptance Criteria
-- [ ] App `OrderPulse Mail Connector` registered
-- [ ] Delegated permissions: Mail.Read, Mail.ReadBasic, User.Read
-- [ ] Client secret created and saved securely
-- [ ] Redirect URI configured
+- [ ] App `OrderPulse Web` registered with SPA redirect type
+- [ ] Production and localhost redirect URIs configured
+- [ ] Supported account types includes personal Microsoft accounts
+- [ ] ID tokens and access tokens enabled
+- [ ] Client ID and tenant ID noted for app config
 
 ## Estimated Time
 10 minutes
-EOF
-)"
 
-gh issue create --repo "$REPO" --title "Create Azure Key Vault and Store Secrets" \
-  --label "infrastructure,priority:high,phase:1-foundation" \
+## Cost
+Free (up to 50K authentications/month)
+ISSUE_EOF
+)
+gh issue create --repo "$REPO" --title "Set Up Microsoft Entra External ID for Authentication" \
+  --label "infrastructure,auth,priority:high,phase:1-foundation" \
   --milestone "Phase 1: Foundation" \
-  --body "$(cat <<'EOF'
+  --body "$BODY"
+
+# --- Issue: Register Microsoft Graph API App ---
+BODY=$(cat <<'ISSUE_EOF'
+## Task
+Register a separate app in your **rysetechnologies** Entra tenant for server-side access to Exchange Online mailboxes via Microsoft Graph API.
+
+## Steps
+1. Go to [Microsoft Entra admin center](https://entra.microsoft.com) (rysetechnologies tenant)
+2. **App registrations** > **New registration**
+   - Name: `OrderPulse Mail Connector`
+   - Supported account types: Accounts in any organizational directory and personal Microsoft accounts
+   - Redirect URI type: **Web** (this is a server-side confidential client, not SPA)
+   - Redirect URI: `https://app.orderpulse.rysetechnologies.com/mailbox/callback`
+3. After registration, go to **Authentication** blade:
+   - Click **Add URI** and add: `https://localhost:5001/mailbox/callback` (dev)
+4. **API permissions** > Add:
+   - Microsoft Graph > Delegated: `Mail.Read`, `Mail.ReadBasic`, `User.Read`
+5. **Certificates & secrets** > New client secret:
+   - Description: `OrderPulse Production`
+   - Expiry: 12 months (set calendar reminder to rotate)
+   - **Save the secret value immediately** -- it is only shown once
+6. Note: Client ID, Tenant ID, Client Secret -- all go to Key Vault
+
+## Note
+This is a separate app registration from `OrderPulse Web` (the SPA for end users). This one uses the **Web** redirect type because Azure Functions calls the Graph API server-side with a client secret.
+
+## Acceptance Criteria
+- [ ] App `OrderPulse Mail Connector` registered with Web redirect type
+- [ ] Delegated permissions: Mail.Read, Mail.ReadBasic, User.Read
+- [ ] Client secret created and saved securely
+- [ ] Production and localhost redirect URIs configured
+
+## Estimated Time
+10 minutes
+ISSUE_EOF
+)
+gh issue create --repo "$REPO" --title "Register Microsoft Graph API App" \
+  --label "infrastructure,email,auth,priority:high,phase:1-foundation" \
+  --milestone "Phase 1: Foundation" \
+  --body "$BODY"
+
+# --- Issue: Create Azure Key Vault ---
+BODY=$(cat <<'ISSUE_EOF'
 ## Task
 Central secrets store for all connection strings, API keys, and credentials.
 
 ## Steps
-1. Navigate to **Key Vault** → **Create**
+1. Navigate to **Key Vault** > **Create**
 2. Name: `kv-orderpulse`
 3. Region: East US 2
 4. Pricing: Standard
 5. After creation, add these secrets:
-   - `SqlConnectionString` — Azure SQL connection string
-   - `BlobStorageConnectionString` — Storage account connection string
-   - `AzureOpenAiKey` — Azure OpenAI API key
-   - `AzureOpenAiEndpoint` — Azure OpenAI endpoint URL
-   - `GraphClientId` — Graph app registration client ID
-   - `GraphClientSecret` — Graph app client secret
-   - `ServiceBusConnectionString` — Service Bus connection string
+   - `SqlConnectionString` -- Azure SQL connection string
+   - `BlobStorageConnectionString` -- Storage account connection string
+   - `AzureOpenAiKey` -- Azure OpenAI API key (shared across both deployments)
+   - `AzureOpenAiClassifierEndpoint` -- AI Foundry endpoint for classifier (GPT-4o)
+   - `AzureOpenAiParserEndpoint` -- AI Foundry endpoint for parser (GPT-4o-mini)
+   - `GraphClientId` -- Graph app registration client ID
+   - `GraphClientSecret` -- Graph app client secret
+   - `ServiceBusConnectionString` -- Service Bus connection string
 6. **Access policies**: Will be granted to App Service and Functions managed identities (after those are created)
 
 ## Acceptance Criteria
 - [ ] Key Vault `kv-orderpulse` created
-- [ ] All 7 secrets stored
+- [ ] All 8 secrets stored
 - [ ] Access policies will be configured in the deployment issue
 
 ## Estimated Time
@@ -315,13 +339,15 @@ Central secrets store for all connection strings, API keys, and credentials.
 
 ## Cost
 ~$0.03/10K operations
-EOF
-)"
-
-gh issue create --repo "$REPO" --title "Deploy App Service for Web API" \
-  --label "infrastructure,devops,priority:high,phase:1-foundation" \
+ISSUE_EOF
+)
+gh issue create --repo "$REPO" --title "Create Azure Key Vault and Store Secrets" \
+  --label "infrastructure,priority:high,phase:1-foundation" \
   --milestone "Phase 1: Foundation" \
-  --body "$(cat <<'EOF'
+  --body "$BODY"
+
+# --- Issue: Deploy App Service ---
+BODY=$(cat <<'ISSUE_EOF'
 ## Task
 Create the hosting environment for the ASP.NET Core API and Blazor WASM frontend.
 
@@ -329,20 +355,21 @@ Create the hosting environment for the ASP.NET Core API and Blazor WASM frontend
 1. **App Service Plan**:
    - Name: `plan-orderpulse`
    - OS: Linux
-   - Tier: **B1 (Basic)** — $13/month
+   - Tier: **B1 (Basic)** -- $13/month
    - Region: East US 2
 2. **Web App**:
-   - Name: `app-orderpulse` → gives you `app-orderpulse.azurewebsites.net`
+   - Name: `app-orderpulse` (gives you `app-orderpulse.azurewebsites.net`)
    - Runtime: .NET 8
    - Enable **System Assigned Managed Identity**
 3. **Custom domain**:
-   - Add: `app.orderpulse.stevensettle.com`
-   - DNS: CNAME `app.orderpulse` → `app-orderpulse.azurewebsites.net`
+   - Add: `app.orderpulse.rysetechnologies.com`
+   - DNS: CNAME `app.orderpulse` to `app-orderpulse.azurewebsites.net`
    - SSL: Azure managed certificate (free)
 4. **App Settings** (reference Key Vault):
    ```
    ConnectionStrings__OrderPulseDb = @Microsoft.KeyVault(VaultName=kv-orderpulse;SecretName=SqlConnectionString)
-   AzureOpenAI__Endpoint = @Microsoft.KeyVault(VaultName=kv-orderpulse;SecretName=AzureOpenAiEndpoint)
+   AzureOpenAI__ClassifierEndpoint = @Microsoft.KeyVault(VaultName=kv-orderpulse;SecretName=AzureOpenAiClassifierEndpoint)
+   AzureOpenAI__ParserEndpoint = @Microsoft.KeyVault(VaultName=kv-orderpulse;SecretName=AzureOpenAiParserEndpoint)
    AzureOpenAI__ApiKey = @Microsoft.KeyVault(VaultName=kv-orderpulse;SecretName=AzureOpenAiKey)
    ```
 5. **Key Vault access**: Grant the managed identity **GET** permission on secrets in `kv-orderpulse`
@@ -352,20 +379,22 @@ Create the hosting environment for the ASP.NET Core API and Blazor WASM frontend
 - [ ] Web App running with managed identity
 - [ ] Custom domain with SSL
 - [ ] Key Vault references configured
-- [ ] Test endpoint responds at https://app.orderpulse.stevensettle.com/health
+- [ ] Test endpoint responds at https://app.orderpulse.rysetechnologies.com/health
 
 ## Estimated Time
 20 minutes
 
 ## Cost
 $13/month (included in plan)
-EOF
-)"
-
-gh issue create --repo "$REPO" --title "Deploy Azure Functions for Email Processing" \
+ISSUE_EOF
+)
+gh issue create --repo "$REPO" --title "Deploy App Service for Web API" \
   --label "infrastructure,devops,priority:high,phase:1-foundation" \
   --milestone "Phase 1: Foundation" \
-  --body "$(cat <<'EOF'
+  --body "$BODY"
+
+# --- Issue: Deploy Azure Functions ---
+BODY=$(cat <<'ISSUE_EOF'
 ## Task
 Create the serverless compute environment for email ingestion and AI processing.
 
@@ -378,12 +407,12 @@ Create the serverless compute environment for email ingestion and AI processing.
    - Enable **System Assigned Managed Identity**
 2. **App Settings**:
    - Key Vault references (same pattern as App Service)
-   - `ServiceBusConnection` → Key Vault reference
+   - `ServiceBusConnection` to Key Vault reference
 3. **Key Vault access**: Grant the managed identity GET permission
 4. The function app will host 3 functions:
-   - `EmailPollingFunction` — timer trigger, every 5 minutes
-   - `EmailClassifierFunction` — Service Bus trigger on `emails-pending`
-   - `EmailParserFunction` — Service Bus trigger on `emails-classified`
+   - `EmailPollingFunction` -- timer trigger, every 5 minutes
+   - `EmailClassifierFunction` -- Service Bus trigger on `emails-pending`
+   - `EmailParserFunction` -- Service Bus trigger on `emails-classified`
 
 ## Acceptance Criteria
 - [ ] Function App `func-orderpulse` created on Consumption plan
@@ -396,33 +425,35 @@ Create the serverless compute environment for email ingestion and AI processing.
 
 ## Cost
 ~$0-5/month (consumption plan)
-EOF
-)"
-
-gh issue create --repo "$REPO" --title "Create Exchange Mailbox: purchases@stevensettle.com" \
-  --label "infrastructure,email,priority:high,phase:1-foundation" \
+ISSUE_EOF
+)
+gh issue create --repo "$REPO" --title "Deploy Azure Functions for Email Processing" \
+  --label "infrastructure,devops,priority:high,phase:1-foundation" \
   --milestone "Phase 1: Foundation" \
-  --body "$(cat <<'EOF'
+  --body "$BODY"
+
+# --- Issue: Create Exchange Mailbox ---
+BODY=$(cat <<'ISSUE_EOF'
 ## Task
 Create the dedicated purchase email inbox that OrderPulse will monitor.
 
 ## Steps
 1. Go to [Microsoft 365 Admin Center](https://admin.microsoft.com)
-2. **Users** → **Active users** → **Add a user**
+2. **Users** > **Active users** > **Add a user**
    - Name: `OrderPulse Purchases`
-   - Username: `purchases@stevensettle.com`
+   - Username: `purchases@rysetechnologies.com`
    - Assign: Exchange Online Plan 1 license (~$4/month)
 3. After creation, configure mailbox:
    - Set up a mail flow rule to auto-mark all messages as read (prevents unread count anxiety)
-4. Start using `purchases@stevensettle.com` for all online purchases going forward
+4. Start using `purchases@rysetechnologies.com` for all online purchases going forward
 
 ## Going Forward
 - Use this email at checkout everywhere: Amazon, Target, Best Buy, Nike, etc.
-- Old orders on your regular email won't be tracked (unless you forward them)
+- Old orders on your regular email will not be tracked (unless you forward them)
 - Consider setting up email forwarding rules from your existing email for purchase-related senders
 
 ## Acceptance Criteria
-- [ ] `purchases@stevensettle.com` mailbox active
+- [ ] `purchases@rysetechnologies.com` mailbox active
 - [ ] Can log in and receive emails
 - [ ] Auto-read rule configured
 
@@ -431,24 +462,26 @@ Create the dedicated purchase email inbox that OrderPulse will monitor.
 
 ## Cost
 ~$4/month (Exchange Online Plan 1)
-EOF
-)"
-
-gh issue create --repo "$REPO" --title "Set Up Application Insights Monitoring" \
-  --label "infrastructure,devops,priority:medium,phase:1-foundation" \
+ISSUE_EOF
+)
+gh issue create --repo "$REPO" --title "Create Exchange Mailbox for Purchase Emails" \
+  --label "infrastructure,email,priority:high,phase:1-foundation" \
   --milestone "Phase 1: Foundation" \
-  --body "$(cat <<'EOF'
+  --body "$BODY"
+
+# --- Issue: Application Insights ---
+BODY=$(cat <<'ISSUE_EOF'
 ## Task
 Enable monitoring and diagnostics for the App Service and Functions.
 
 ## Steps
-1. Navigate to **Application Insights** → **Create**
+1. Navigate to **Application Insights** > **Create**
 2. Name: `ai-orderpulse`
 3. Resource group: `rg-orderpulse-prod`
 4. Region: East US 2
 5. Link to App Service and Function App (can be done from their Monitoring settings)
 6. Create availability test:
-   - URL: `https://app.orderpulse.stevensettle.com/health`
+   - URL: `https://app.orderpulse.rysetechnologies.com/health`
    - Frequency: Every 5 minutes
    - Locations: East US, West US
 
@@ -462,18 +495,20 @@ Enable monitoring and diagnostics for the App Service and Functions.
 
 ## Cost
 ~$2-5/month
-EOF
-)"
-
-gh issue create --repo "$REPO" --title "Configure DNS for app.orderpulse.stevensettle.com" \
-  --label "infrastructure,priority:high,phase:1-foundation" \
+ISSUE_EOF
+)
+gh issue create --repo "$REPO" --title "Set Up Application Insights Monitoring" \
+  --label "infrastructure,devops,priority:medium,phase:1-foundation" \
   --milestone "Phase 1: Foundation" \
-  --body "$(cat <<'EOF'
+  --body "$BODY"
+
+# --- Issue: Configure DNS ---
+BODY=$(cat <<'ISSUE_EOF'
 ## Task
 Point the custom domain to Azure App Service.
 
 ## Steps
-1. In your DNS provider for `stevensettle.com`:
+1. In your DNS provider for `rysetechnologies.com`:
 2. Add CNAME record:
    - Host: `app.orderpulse`
    - Points to: `app-orderpulse.azurewebsites.net`
@@ -485,22 +520,24 @@ Point the custom domain to Azure App Service.
 - [ ] DNS CNAME record created
 - [ ] Azure domain verification passes
 - [ ] SSL certificate provisioned
-- [ ] `https://app.orderpulse.stevensettle.com` resolves
+- [ ] `https://app.orderpulse.rysetechnologies.com` resolves
 
 ## Estimated Time
 10 minutes
-EOF
-)"
+ISSUE_EOF
+)
+gh issue create --repo "$REPO" --title "Configure DNS for OrderPulse Custom Domain" \
+  --label "infrastructure,priority:high,phase:1-foundation" \
+  --milestone "Phase 1: Foundation" \
+  --body "$BODY"
 
 # ════════════════════════════════════════════════════════════════════
 # CODE IMPLEMENTATION ISSUES
 # ════════════════════════════════════════════════════════════════════
 echo "Creating implementation issues..."
 
-gh issue create --repo "$REPO" --title "Implement repository classes (EF Core)" \
-  --label "backend,database,priority:high,phase:1-foundation" \
-  --milestone "Phase 1: Foundation" \
-  --body "$(cat <<'EOF'
+# --- Issue: Repository classes ---
+BODY=$(cat <<'ISSUE_EOF'
 ## Task
 Implement the repository interfaces defined in `OrderPulse.Domain/Interfaces/` using Entity Framework Core.
 
@@ -521,19 +558,21 @@ Implement the repository interfaces defined in `OrderPulse.Domain/Interfaces/` u
 - [ ] Smart filter shortcuts working
 - [ ] Pagination returns correct total counts
 - [ ] Search works across order numbers and product names
-EOF
-)"
+ISSUE_EOF
+)
+gh issue create --repo "$REPO" --title "Implement repository classes (EF Core)" \
+  --label "backend,database,priority:high,phase:1-foundation" \
+  --milestone "Phase 1: Foundation" \
+  --body "$BODY"
 
-gh issue create --repo "$REPO" --title "Implement Azure OpenAI service wrapper" \
-  --label "backend,ai,priority:high,phase:2-ai" \
-  --milestone "Phase 2: AI Parsing" \
-  --body "$(cat <<'EOF'
+# --- Issue: Azure OpenAI service wrapper ---
+BODY=$(cat <<'ISSUE_EOF'
 ## Task
 Create the C# service that wraps Azure OpenAI calls, loading prompts from the `/AI/Prompts/` markdown files.
 
 ## Files to Create
-- `OrderPulse.Infrastructure/AI/AzureOpenAIService.cs` — base HTTP client wrapper
-- `OrderPulse.Infrastructure/AI/EmailClassifierService.cs` — implements `IEmailClassifier`
+- `OrderPulse.Infrastructure/AI/AzureOpenAIService.cs` -- base HTTP client wrapper
+- `OrderPulse.Infrastructure/AI/EmailClassifierService.cs` -- implements `IEmailClassifier`
 - `OrderPulse.Infrastructure/AI/Parsers/OrderParserService.cs`
 - `OrderPulse.Infrastructure/AI/Parsers/ShipmentParserService.cs`
 - `OrderPulse.Infrastructure/AI/Parsers/DeliveryParserService.cs`
@@ -558,13 +597,15 @@ All 8 prompt templates are in `OrderPulse.Infrastructure/AI/Prompts/`
 - [ ] Classifier returns one of 14 types with confidence score
 - [ ] All 7 parsers extract structured JSON matching the database schema
 - [ ] Low confidence results flagged for review
-EOF
-)"
-
-gh issue create --repo "$REPO" --title "Implement email processing orchestrator" \
-  --label "backend,ai,email,priority:high,phase:2-ai" \
+ISSUE_EOF
+)
+gh issue create --repo "$REPO" --title "Implement Azure OpenAI service wrapper" \
+  --label "backend,ai,priority:high,phase:2-ai" \
   --milestone "Phase 2: AI Parsing" \
-  --body "$(cat <<'EOF'
+  --body "$BODY"
+
+# --- Issue: Email processing orchestrator ---
+BODY=$(cat <<'ISSUE_EOF'
 ## Task
 Build the orchestrator that routes classified emails to the correct parsing agent and writes results to the database.
 
@@ -588,19 +629,21 @@ Build the orchestrator that routes classified emails to the correct parsing agen
 - [ ] Returns created with label/QR data extracted
 - [ ] Order status recalculated after each update
 - [ ] Timeline events created for all actions
-EOF
-)"
+ISSUE_EOF
+)
+gh issue create --repo "$REPO" --title "Implement email processing orchestrator" \
+  --label "backend,ai,email,priority:high,phase:2-ai" \
+  --milestone "Phase 2: AI Parsing" \
+  --body "$BODY"
 
-gh issue create --repo "$REPO" --title "Implement Microsoft Graph email ingestion" \
-  --label "backend,email,priority:high,phase:1-foundation" \
-  --milestone "Phase 1: Foundation" \
-  --body "$(cat <<'EOF'
+# --- Issue: Microsoft Graph email ingestion ---
+BODY=$(cat <<'ISSUE_EOF'
 ## Task
-Complete the Graph API integration in `EmailPollingFunction` — the TODO skeleton is already there.
+Complete the Graph API integration in `EmailPollingFunction` -- the TODO skeleton is already there.
 
 ## Key Requirements
 - Use `Microsoft.Graph` SDK to authenticate with client credentials
-- Fetch messages from each tenant's mailbox since `LastSyncAt`
+- Fetch messages from each tenant mailbox since `LastSyncAt`
 - Store raw email body HTML in Azure Blob Storage
 - Create `EmailMessage` records in the database
 - Publish message IDs to Service Bus `emails-pending` queue
@@ -617,13 +660,15 @@ Complete the Graph API integration in `EmailPollingFunction` — the TODO skelet
 - [ ] Deduplication by Graph message ID
 - [ ] Service Bus messages published for processing
 - [ ] Graph throttling handled gracefully
-EOF
-)"
+ISSUE_EOF
+)
+gh issue create --repo "$REPO" --title "Implement Microsoft Graph email ingestion" \
+  --label "backend,email,priority:high,phase:1-foundation" \
+  --milestone "Phase 1: Foundation" \
+  --body "$BODY"
 
-gh issue create --repo "$REPO" --title "Build Blazor WASM frontend — Dashboard and Order List" \
-  --label "frontend,priority:high,phase:3-ui" \
-  --milestone "Phase 3: Web UI" \
-  --body "$(cat <<'EOF'
+# --- Issue: Blazor Dashboard and Order List ---
+BODY=$(cat <<'ISSUE_EOF'
 ## Task
 Create the Blazor WebAssembly frontend project with the Dashboard and Order List pages.
 
@@ -640,11 +685,11 @@ Create the Blazor WebAssembly frontend project with the Dashboard and Order List
    - Filter chips (smart shortcuts)
    - Retailer dropdown, date range, sort controls
    - Paginated order table with status badges
-   - Click row → navigate to order detail
+   - Click row to navigate to order detail
 
 ## Technical Requirements
 - Blazor WASM hosted model
-- Authentication via MSAL (Azure AD B2C)
+- Authentication via MSAL (Microsoft Entra External ID)
 - HttpClient calls to the OrderPulse API
 - Responsive layout (desktop/tablet)
 
@@ -654,36 +699,40 @@ Create the Blazor WebAssembly frontend project with the Dashboard and Order List
 - [ ] Activity feed displays recent events
 - [ ] Order list supports filtering and pagination
 - [ ] Navigation between pages works
-EOF
-)"
-
-gh issue create --repo "$REPO" --title "Build Blazor WASM frontend — Order Detail and Timeline" \
+ISSUE_EOF
+)
+gh issue create --repo "$REPO" --title "Build Blazor WASM frontend -- Dashboard and Order List" \
   --label "frontend,priority:high,phase:3-ui" \
   --milestone "Phase 3: Web UI" \
-  --body "$(cat <<'EOF'
+  --body "$BODY"
+
+# --- Issue: Blazor Order Detail ---
+BODY=$(cat <<'ISSUE_EOF'
 ## Task
 Build the Order Detail page with full lifecycle view.
 
 ## Sections
-1. **Order header** — retailer, order #, date, status, payment, address, totals
-2. **Line items table** — product image, name, SKU, qty, price, per-line status
-3. **Price breakdown** — subtotal, shipping, tax, discount, total
-4. **Shipments** — carrier, tracking link, ship date, ETA, delivery status
-5. **Returns** — RMA, status, label/QR, deadline, refund status
-6. **Timeline** — vertical chronological event list with icons
+1. **Order header** -- retailer, order #, date, status, payment, address, totals
+2. **Line items table** -- product image, name, SKU, qty, price, per-line status
+3. **Price breakdown** -- subtotal, shipping, tax, discount, total
+4. **Shipments** -- carrier, tracking link, ship date, ETA, delivery status
+5. **Returns** -- RMA, status, label/QR, deadline, refund status
+6. **Timeline** -- vertical chronological event list with icons
 
 ## Acceptance Criteria
 - [ ] All sections render with real API data
 - [ ] Tracking numbers link to carrier websites
 - [ ] Return labels/QR codes display inline
 - [ ] Timeline shows complete order history
-EOF
-)"
-
-gh issue create --repo "$REPO" --title "Build Blazor WASM frontend — Return Center" \
+ISSUE_EOF
+)
+gh issue create --repo "$REPO" --title "Build Blazor WASM frontend -- Order Detail and Timeline" \
   --label "frontend,priority:high,phase:3-ui" \
   --milestone "Phase 3: Web UI" \
-  --body "$(cat <<'EOF'
+  --body "$BODY"
+
+# --- Issue: Blazor Return Center ---
+BODY=$(cat <<'ISSUE_EOF'
 ## Task
 Build the Return Center and Awaiting Refund pages.
 
@@ -703,13 +752,15 @@ Build the Return Center and Awaiting Refund pages.
 - [ ] Deadline countdowns update correctly
 - [ ] Print All Labels generates combined PDF
 - [ ] Awaiting refund shows accurate wait times
-EOF
-)"
-
-gh issue create --repo "$REPO" --title "Build review queue and settings pages" \
-  --label "frontend,priority:medium,phase:3-ui" \
+ISSUE_EOF
+)
+gh issue create --repo "$REPO" --title "Build Blazor WASM frontend -- Return Center" \
+  --label "frontend,priority:high,phase:3-ui" \
   --milestone "Phase 3: Web UI" \
-  --body "$(cat <<'EOF'
+  --body "$BODY"
+
+# --- Issue: Review Queue and Settings ---
+BODY=$(cat <<'ISSUE_EOF'
 ## Task
 Build the Review Queue for manual email corrections and the Settings page.
 
@@ -729,18 +780,20 @@ Build the Review Queue for manual email corrections and the Settings page.
 - [ ] Corrections save and reprocess the email
 - [ ] Settings page displays current config
 - [ ] Historical import triggers backfill
-EOF
-)"
+ISSUE_EOF
+)
+gh issue create --repo "$REPO" --title "Build review queue and settings pages" \
+  --label "frontend,priority:medium,phase:3-ui" \
+  --milestone "Phase 3: Web UI" \
+  --body "$BODY"
 
-gh issue create --repo "$REPO" --title "Implement tenant onboarding flow" \
-  --label "backend,auth,email,priority:high,phase:4-multi-tenant" \
-  --milestone "Phase 4: Multi-Tenant & Polish" \
-  --body "$(cat <<'EOF'
+# --- Issue: Tenant Onboarding ---
+BODY=$(cat <<'ISSUE_EOF'
 ## Task
 Build the end-to-end flow for new users to sign up and connect their mailbox.
 
 ## Flow
-1. User signs up via B2C (Microsoft account)
+1. User signs up via Microsoft Entra External ID (Microsoft account)
 2. Tenant record created in database
 3. User enters their purchase mailbox email
 4. OAuth consent flow for Graph API Mail.Read permission
@@ -753,24 +806,26 @@ Build the end-to-end flow for new users to sign up and connect their mailbox.
 - [ ] OAuth flow captures Graph API consent
 - [ ] Mailbox polling begins immediately after connection
 - [ ] Historical backfill processes emails from selected date range
-EOF
-)"
+ISSUE_EOF
+)
+gh issue create --repo "$REPO" --title "Implement tenant onboarding flow" \
+  --label "backend,auth,email,priority:high,phase:4-multi-tenant" \
+  --milestone "Phase 4: Multi-Tenant & Polish" \
+  --body "$BODY"
 
-gh issue create --repo "$REPO" --title "Set up CI/CD with GitHub Actions" \
-  --label "devops,priority:medium,phase:1-foundation" \
-  --milestone "Phase 1: Foundation" \
-  --body "$(cat <<'EOF'
+# --- Issue: CI/CD ---
+BODY=$(cat <<'ISSUE_EOF'
 ## Task
 Create GitHub Actions workflows for build, test, and deployment.
 
 ## Workflows to Create
-1. **CI** (`.github/workflows/ci.yml`) — triggers on PR to `main`/`develop`
+1. **CI** (`.github/workflows/ci.yml`) -- triggers on PR to `main`/`develop`
    - dotnet restore, build, test
    - Fail on build warnings
-2. **Deploy API** (`.github/workflows/deploy-api.yml`) — triggers on push to `main`
+2. **Deploy API** (`.github/workflows/deploy-api.yml`) -- triggers on push to `main`
    - Build + publish OrderPulse.Api
    - Deploy to Azure App Service
-3. **Deploy Functions** (`.github/workflows/deploy-functions.yml`) — triggers on push to `main`
+3. **Deploy Functions** (`.github/workflows/deploy-functions.yml`) -- triggers on push to `main`
    - Build + publish OrderPulse.Functions
    - Deploy to Azure Functions
 
@@ -778,8 +833,12 @@ Create GitHub Actions workflows for build, test, and deployment.
 - [ ] PRs get build status checks
 - [ ] Merge to main auto-deploys API and Functions
 - [ ] Azure credentials stored as GitHub Secrets
-EOF
-)"
+ISSUE_EOF
+)
+gh issue create --repo "$REPO" --title "Set up CI/CD with GitHub Actions" \
+  --label "devops,priority:medium,phase:1-foundation" \
+  --milestone "Phase 1: Foundation" \
+  --body "$BODY"
 
 echo ""
-echo "✅ All issues created! Check https://github.com/$REPO/issues"
+echo "All issues created! Check https://github.com/$REPO/issues"
