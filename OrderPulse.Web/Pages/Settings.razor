@@ -1,0 +1,280 @@
+@page "/settings"
+@attribute [Authorize]
+
+<PageTitle>Settings - OrderPulse</PageTitle>
+
+<h2 style="margin-bottom:1.5rem;font-size:1.5rem;font-weight:700;">Settings</h2>
+
+@if (_loading)
+{
+    <div class="loading">Loading settings...</div>
+}
+else if (_settings is null)
+{
+    <div class="card" style="padding:2rem;text-align:center;">
+        <div class="text-muted">Unable to load settings. Please try again.</div>
+    </div>
+}
+else
+{
+    <!-- Section 1: Connected Mailbox -->
+    <div class="settings-section">
+        <h3 class="settings-title">Connected Mailbox</h3>
+        <div class="settings-card">
+            <div class="mailbox-row">
+                <div class="mailbox-info">
+                    <div class="mailbox-email">
+                        @if (!string.IsNullOrEmpty(_settings.ConnectedEmail))
+                        {
+                            <span class="status-dot @GetMailboxDotClass()"></span>
+                            <span>@_settings.ConnectedEmail</span>
+                        }
+                        else
+                        {
+                            <span class="text-muted">No mailbox connected</span>
+                        }
+                    </div>
+                    <div class="mailbox-meta">
+                        <span class="text-muted">Status:</span>
+                        <span class="badge @GetMailboxBadgeClass()">@_settings.MailboxStatus</span>
+                        @if (_settings.LastSyncAt.HasValue)
+                        {
+                            <span class="text-muted" style="margin-left:1rem;">
+                                Last synced: @_settings.LastSyncAt.Value.ToString("MMM d, yyyy h:mm tt")
+                            </span>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Section 2: Sync Settings -->
+    <div class="settings-section">
+        <h3 class="settings-title">Sync Settings</h3>
+        <div class="settings-card">
+            <div class="settings-field">
+                <label>Polling Interval</label>
+                <select @bind="_update.PollingIntervalMinutes">
+                    <option value="1">Every 1 minute</option>
+                    <option value="2">Every 2 minutes</option>
+                    <option value="5">Every 5 minutes</option>
+                    <option value="10">Every 10 minutes</option>
+                    <option value="15">Every 15 minutes</option>
+                    <option value="30">Every 30 minutes</option>
+                    <option value="60">Every 60 minutes</option>
+                </select>
+            </div>
+            <div class="settings-field">
+                <label class="checkbox-label">
+                    <input type="checkbox" @bind="_update.WebhookEnabled" />
+                    <span>Enable webhook for real-time sync</span>
+                </label>
+                <div class="field-help">When enabled, emails are processed immediately via Microsoft Graph webhook instead of polling.</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Section 3: Historical Import -->
+    <div class="settings-section">
+        <h3 class="settings-title">Historical Import</h3>
+        <div class="settings-card">
+            <p class="text-muted" style="margin-bottom:1rem;">
+                Import older emails from your mailbox. Select a date range and we'll queue them for processing.
+            </p>
+            <div class="import-row">
+                <div class="settings-field">
+                    <label>Start Date</label>
+                    <input type="date" @bind="_importStart" />
+                </div>
+                <div class="settings-field">
+                    <label>End Date</label>
+                    <input type="date" @bind="_importEnd" />
+                </div>
+                <div class="settings-field" style="align-self:flex-end;">
+                    <button class="btn btn-primary" @onclick="HandleImport" disabled="@_importing">
+                        @(_importing ? "Importing..." : "Import Emails")
+                    </button>
+                </div>
+            </div>
+            @if (_importResult is not null)
+            {
+                <div class="import-result">
+                    &#x2705; @_importResult.EmailsQueued email(s) queued for processing.
+                    @if (!string.IsNullOrEmpty(_importResult.Message))
+                    {
+                        <span> @_importResult.Message</span>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+
+    <!-- Section 4: Notification Preferences -->
+    <div class="settings-section">
+        <h3 class="settings-title">Notification Preferences</h3>
+        <div class="settings-card">
+            <div class="notification-grid">
+                <label class="checkbox-label">
+                    <input type="checkbox" @bind="_update.NotifyDelivery" />
+                    <span>Delivery confirmations</span>
+                </label>
+                <label class="checkbox-label">
+                    <input type="checkbox" @bind="_update.NotifyShipment" />
+                    <span>Shipment updates</span>
+                </label>
+                <label class="checkbox-label">
+                    <input type="checkbox" @bind="_update.NotifyReturn" />
+                    <span>Return status changes</span>
+                </label>
+                <label class="checkbox-label">
+                    <input type="checkbox" @bind="_update.NotifyRefund" />
+                    <span>Refund confirmations</span>
+                </label>
+                <label class="checkbox-label">
+                    <input type="checkbox" @bind="_update.NotifyIssues" />
+                    <span>Issues &amp; problems</span>
+                </label>
+            </div>
+        </div>
+    </div>
+
+    <!-- Save Button -->
+    <div class="settings-save-bar">
+        <button class="btn btn-primary" @onclick="HandleSave" disabled="@_saving">
+            @(_saving ? "Saving..." : "Save Settings")
+        </button>
+        @if (_saved)
+        {
+            <span class="save-success">&#x2705; Settings saved</span>
+        }
+    </div>
+}
+
+<style>
+    .settings-section { margin-bottom: 1.5rem; }
+    .settings-title {
+        font-size: 0.85rem; font-weight: 600; text-transform: uppercase;
+        letter-spacing: 0.05em; color: var(--text-secondary); margin-bottom: 0.5rem;
+    }
+    .settings-card {
+        padding: 1.25rem; border: 1px solid var(--border);
+        border-radius: 12px; background: #fff;
+    }
+    .settings-field { margin-bottom: 0.75rem; }
+    .settings-field label:not(.checkbox-label) {
+        display: block; font-size: 0.8rem; font-weight: 600;
+        color: var(--text-secondary); margin-bottom: 0.25rem;
+    }
+    .settings-field select,
+    .settings-field input[type="date"],
+    .settings-field input[type="text"] {
+        padding: 0.5rem 0.75rem; border: 1px solid var(--border);
+        border-radius: 8px; font-size: 0.9rem; min-width: 200px;
+    }
+    .checkbox-label {
+        display: flex; align-items: center; gap: 0.5rem; cursor: pointer;
+        font-size: 0.9rem; color: var(--text-primary);
+    }
+    .checkbox-label input[type="checkbox"] { width: 18px; height: 18px; cursor: pointer; }
+    .field-help { font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.25rem; margin-left: 1.75rem; }
+    .notification-grid { display: flex; flex-direction: column; gap: 0.75rem; }
+    .mailbox-row { display: flex; align-items: center; justify-content: space-between; }
+    .mailbox-info { display: flex; flex-direction: column; gap: 0.35rem; }
+    .mailbox-email { font-size: 1rem; font-weight: 600; display: flex; align-items: center; gap: 0.5rem; }
+    .mailbox-meta { display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; }
+    .status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+    .status-dot.green { background: #22c55e; }
+    .status-dot.yellow { background: #f59e0b; }
+    .status-dot.red { background: var(--red); }
+    .import-row { display: flex; gap: 1rem; align-items: flex-start; flex-wrap: wrap; }
+    .import-result {
+        margin-top: 0.75rem; padding: 0.5rem 0.75rem;
+        background: #dcfce7; color: #15803d; border-radius: 8px; font-size: 0.85rem;
+    }
+    .settings-save-bar {
+        display: flex; align-items: center; gap: 1rem;
+        padding: 1rem 0; border-top: 1px solid var(--border); margin-top: 0.5rem;
+    }
+    .save-success { color: #15803d; font-size: 0.85rem; font-weight: 500; }
+</style>
+
+@code {
+    [Inject] private SettingsService SettingsSvc { get; set; } = default!;
+
+    private TenantSettings? _settings;
+    private TenantSettingsUpdate _update = new();
+    private bool _loading = true;
+    private bool _saving;
+    private bool _saved;
+
+    // Historical import
+    private DateTime _importStart = DateTime.Now.AddMonths(-3);
+    private DateTime _importEnd = DateTime.Now;
+    private bool _importing;
+    private HistoricalImportResult? _importResult;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _loading = true;
+        try
+        {
+            _settings = await SettingsSvc.GetSettingsAsync();
+            if (_settings is not null)
+            {
+                _update = new TenantSettingsUpdate
+                {
+                    PollingIntervalMinutes = _settings.PollingIntervalMinutes,
+                    WebhookEnabled = _settings.WebhookEnabled,
+                    NotifyDelivery = _settings.NotifyDelivery,
+                    NotifyShipment = _settings.NotifyShipment,
+                    NotifyReturn = _settings.NotifyReturn,
+                    NotifyRefund = _settings.NotifyRefund,
+                    NotifyIssues = _settings.NotifyIssues
+                };
+            }
+        }
+        catch { _settings = null; }
+        finally { _loading = false; }
+    }
+
+    private async Task HandleSave()
+    {
+        _saving = true; _saved = false;
+        try
+        {
+            await SettingsSvc.SaveSettingsAsync(_update);
+            _saved = true;
+        }
+        finally { _saving = false; }
+    }
+
+    private async Task HandleImport()
+    {
+        _importing = true; _importResult = null;
+        try
+        {
+            _importResult = await SettingsSvc.TriggerHistoricalImportAsync(new HistoricalImportRequest
+            {
+                StartDate = _importStart,
+                EndDate = _importEnd
+            });
+        }
+        catch { _importResult = new HistoricalImportResult { Message = "Import failed. Please try again." }; }
+        finally { _importing = false; }
+    }
+
+    private string GetMailboxDotClass() => _settings?.MailboxStatus switch
+    {
+        "Active" or "Connected" => "green",
+        "Error" or "Disconnected" => "red",
+        _ => "yellow"
+    };
+
+    private string GetMailboxBadgeClass() => _settings?.MailboxStatus switch
+    {
+        "Active" or "Connected" => "badge-green",
+        "Error" or "Disconnected" => "badge-red",
+        _ => "badge-yellow"
+    };
+}
