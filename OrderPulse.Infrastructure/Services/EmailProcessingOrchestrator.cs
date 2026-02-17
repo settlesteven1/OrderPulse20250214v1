@@ -18,6 +18,8 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
     private readonly OrderPulseDbContext _db;
     private readonly RetailerMatcher _retailerMatcher;
     private readonly OrderStateMachine _stateMachine;
+    private readonly EmailBlobStorageService _blobStorage;
+    private readonly ProcessingLogger _log;
 
     // Parsers
     private readonly IEmailParser<OrderParserResult> _orderParser;
@@ -33,6 +35,8 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
         OrderPulseDbContext db,
         RetailerMatcher retailerMatcher,
         OrderStateMachine stateMachine,
+        EmailBlobStorageService blobStorage,
+        ProcessingLogger log,
         IEmailParser<OrderParserResult> orderParser,
         IEmailParser<ShipmentParserResult> shipmentParser,
         IEmailParser<DeliveryParserResult> deliveryParser,
@@ -45,6 +49,8 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
         _db = db;
         _retailerMatcher = retailerMatcher;
         _stateMachine = stateMachine;
+        _blobStorage = blobStorage;
+        _log = log;
         _orderParser = orderParser;
         _shipmentParser = shipmentParser;
         _deliveryParser = deliveryParser;
@@ -56,52 +62,103 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
 
     public async Task ProcessEmailAsync(Guid emailMessageId, CancellationToken ct = default)
     {
-        var email = await _db.EmailMessages.FindAsync(new object[] { emailMessageId }, ct);
+        await _log.Info(emailMessageId, "Start", "Beginning email processing");
+
+        // Use IgnoreQueryFilters to find email regardless of RLS
+        var email = await _db.EmailMessages
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(e => e.EmailMessageId == emailMessageId, ct);
         if (email is null)
         {
-            _logger.LogWarning("Email {id} not found for processing", emailMessageId);
+            await _log.Error(emailMessageId, "Start", "Email not found in database");
             return;
         }
+
+        // Set SESSION_CONTEXT for all subsequent DB operations
+        await _db.Database.ExecuteSqlRawAsync(
+            "EXEC sp_set_session_context @key=N'TenantId', @value={0}",
+            email.TenantId.ToString());
+        await _log.Info(emailMessageId, "Start", $"SESSION_CONTEXT set to {email.TenantId}");
+
+        await _log.Info(emailMessageId, "Start",
+            $"Subject: {email.Subject}",
+            $"From: {email.FromAddress}, Classification: {email.ClassificationType}, BlobUrl: {email.BodyBlobUrl ?? "NONE"}");
 
         if (email.ClassificationType is null)
         {
-            _logger.LogWarning("Email {id} has no classification type", emailMessageId);
+            await _log.Error(emailMessageId, "Start", "No classification type set");
             return;
         }
-
-        _logger.LogInformation("Processing email {id} classified as {type}",
-            emailMessageId, email.ClassificationType);
 
         try
         {
             email.ProcessingStatus = ProcessingStatus.Parsing;
             await _db.SaveChangesAsync(ct);
 
-            // Match retailer from sender address
+            // Match retailer
             var retailer = await _retailerMatcher.MatchAsync(email.FromAddress, ct);
             var retailerContext = retailer?.Name;
+            await _log.Info(emailMessageId, "RetailerMatch",
+                retailer != null ? $"Matched retailer: {retailer.Name}" : $"No retailer match for {email.FromAddress}");
 
-            // TODO: Retrieve full body from Blob Storage using email.BodyBlobUrl
+            // Retrieve full body from Blob Storage, fall back to preview
             var body = email.BodyPreview ?? "";
+            var bodySource = "preview";
+            if (!string.IsNullOrEmpty(email.BodyBlobUrl))
+            {
+                try
+                {
+                    var fullBody = await _blobStorage.GetEmailBodyAsync(email.BodyBlobUrl, ct);
+                    if (!string.IsNullOrEmpty(fullBody))
+                    {
+                        body = fullBody;
+                        bodySource = "blob";
+                    }
+                    else
+                    {
+                        await _log.Warn(emailMessageId, "BlobFetch", "Blob returned null/empty, using preview");
+                    }
+                }
+                catch (Exception blobEx)
+                {
+                    await _log.Error(emailMessageId, "BlobFetch", $"Blob fetch failed: {blobEx.Message}", email.BodyBlobUrl);
+                }
+            }
+            else
+            {
+                await _log.Warn(emailMessageId, "BlobFetch", "No BodyBlobUrl set, using preview only");
+            }
+
+            await _log.Info(emailMessageId, "BodyRetrieved",
+                $"Source: {bodySource}, Length: {body.Length} chars",
+                body.Length > 1000 ? body[..1000] : body);
 
             // Route to the appropriate parser
             var orderId = await RouteAndProcessAsync(email, body, retailerContext, ct);
 
-            // Recalculate order status if we have an order
             if (orderId.HasValue)
             {
+                await _log.Success(emailMessageId, "OrderCreated", $"Order ID: {orderId.Value}");
                 await _stateMachine.RecalculateStatusAsync(orderId.Value, ct);
+            }
+            else
+            {
+                await _log.Warn(emailMessageId, "RouteResult", "No order ID returned from parser");
             }
 
             email.ProcessingStatus = ProcessingStatus.Parsed;
             email.ProcessedAt = DateTime.UtcNow;
             await _db.SaveChangesAsync(ct);
 
-            _logger.LogInformation("Successfully processed email {id}", emailMessageId);
+            await _log.Success(emailMessageId, "Complete", "Email processing finished successfully");
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to process email {id}", emailMessageId);
+            var innerMsg = ex.InnerException?.Message ?? "no inner exception";
+            var innerInner = ex.InnerException?.InnerException?.Message;
+            var fullError = $"{ex.GetType().Name}: {ex.Message} | Inner: {innerMsg}" +
+                (innerInner != null ? $" | InnerInner: {innerInner}" : "");
+            await _log.Error(emailMessageId, "Fatal", fullError, ex.StackTrace);
             email.ProcessingStatus = ProcessingStatus.Failed;
             email.ErrorDetails = ex.Message;
             email.RetryCount++;
@@ -154,15 +211,23 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
     private async Task<Guid?> ProcessOrderAsync(
         EmailMessage email, string body, string? retailerContext, CancellationToken ct)
     {
+        await _log.Info(email.EmailMessageId, "OrderParser", $"Calling order parser with {body.Length} chars body");
         var result = await _orderParser.ParseAsync(email.Subject, body, email.FromAddress, retailerContext, ct);
+
+        await _log.Info(email.EmailMessageId, "OrderParser",
+            $"Parser returned: Confidence={result.Confidence}, NeedsReview={result.NeedsReview}, HasData={result.Data != null}, HasOrder={result.Data?.Order != null}, Lines={result.Data?.Lines?.Count ?? 0}",
+            $"ErrorMessage: {result.ErrorMessage ?? "none"}, OrderNumber: {result.Data?.Order?.ExternalOrderNumber ?? "null"}, Total: {result.Data?.Order?.TotalAmount}");
+
         if (result.Data?.Order is null)
         {
+            await _log.Error(email.EmailMessageId, "OrderParser", "Order parser returned no data — flagging for review");
             await FlagForReview(email, "Order parser returned no data", ct);
             return null;
         }
 
         if (result.NeedsReview)
         {
+            await _log.Warn(email.EmailMessageId, "OrderParser", $"Low confidence {result.Confidence} — flagging for review");
             await FlagForReview(email, $"Low confidence: {result.Confidence}", ct);
             return null;
         }
@@ -170,10 +235,18 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
         var parsed = result.Data.Order;
         var retailer = await _retailerMatcher.MatchAsync(email.FromAddress, ct);
 
-        // Try to find existing order by order number
-        var existingOrder = await _db.Orders
-            .Include(o => o.Lines)
-            .FirstOrDefaultAsync(o => o.ExternalOrderNumber == parsed.ExternalOrderNumber, ct);
+        // Try to find existing order by order number (normalize and bypass RLS)
+        var normalized = !string.IsNullOrWhiteSpace(parsed.ExternalOrderNumber)
+            ? NormalizeOrderNumber(parsed.ExternalOrderNumber) : null;
+
+        var existingOrder = normalized != null
+            ? await _db.Orders
+                .IgnoreQueryFilters()
+                .Include(o => o.Lines)
+                .Where(o => o.TenantId == email.TenantId)
+                .FirstOrDefaultAsync(o => o.ExternalOrderNumber == normalized
+                    || o.ExternalOrderNumber == parsed.ExternalOrderNumber, ct)
+            : null;
 
         if (existingOrder is not null && parsed.IsModification)
         {
@@ -191,8 +264,9 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
 
         if (existingOrder is not null)
         {
-            // Duplicate order confirmation — link email but don't create new order
+            // Link email and add any new line items not already on the order
             existingOrder.LastUpdatedEmailId = email.EmailMessageId;
+            AddNewLineItems(existingOrder, result.Data.Lines);
             await _db.SaveChangesAsync(ct);
             return existingOrder.OrderId;
         }
@@ -272,19 +346,15 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
 
         foreach (var shipmentData in result.Data.Shipments)
         {
-            // Find the order this shipment belongs to
-            var order = await FindOrderByReference(shipmentData.OrderReference, email.TenantId, ct);
-            if (order is null)
-            {
-                _logger.LogWarning("Could not match shipment to order: {orderRef}", shipmentData.OrderReference);
-                continue;
-            }
+            // Find or create the order this shipment belongs to
+            var order = await FindOrCreateOrderByReference(shipmentData.OrderReference, email, retailerContext, ct);
 
             // Check for existing shipment by tracking number
             Shipment? shipment = null;
             if (!string.IsNullOrEmpty(shipmentData.TrackingNumber))
             {
                 shipment = await _db.Shipments
+                    .IgnoreQueryFilters()
                     .FirstOrDefaultAsync(s => s.OrderId == order.OrderId &&
                         s.TrackingNumber == shipmentData.TrackingNumber, ct);
             }
@@ -358,9 +428,16 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
     private async Task<Guid?> ProcessDeliveryAsync(
         EmailMessage email, string body, string? retailerContext, CancellationToken ct)
     {
+        await _log.Info(email.EmailMessageId, "DeliveryParser", $"Calling delivery parser with {body.Length} chars body");
         var result = await _deliveryParser.ParseAsync(email.Subject, body, email.FromAddress, retailerContext, ct);
+
+        await _log.Info(email.EmailMessageId, "DeliveryParser",
+            $"Parser returned: Confidence={result.Confidence}, NeedsReview={result.NeedsReview}, HasData={result.Data != null}, HasDelivery={result.Data?.Delivery != null}",
+            $"ErrorMessage: {result.ErrorMessage ?? "none"}, TrackingNumber: {result.Data?.Delivery?.TrackingNumber ?? "null"}, OrderRef: {result.Data?.Delivery?.OrderReference ?? "null"}");
+
         if (result.Data?.Delivery is null)
         {
+            await _log.Error(email.EmailMessageId, "DeliveryParser", "Delivery parser returned no data — flagging for review");
             await FlagForReview(email, "Delivery parser returned no data", ct);
             return null;
         }
@@ -373,38 +450,50 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
 
         var parsed = result.Data.Delivery;
 
-        // Find the shipment by tracking number, or find the order by reference
+        // Find the shipment by tracking number, or find/create the order by reference
         Shipment? shipment = null;
         Order? order = null;
 
         if (!string.IsNullOrEmpty(parsed.TrackingNumber))
         {
             shipment = await _db.Shipments
+                .IgnoreQueryFilters()
                 .Include(s => s.Order)
                 .FirstOrDefaultAsync(s => s.TrackingNumber == parsed.TrackingNumber, ct);
             order = shipment?.Order;
         }
 
-        if (order is null && !string.IsNullOrEmpty(parsed.OrderReference))
+        if (order is null)
         {
-            order = await FindOrderByReference(parsed.OrderReference, email.TenantId, ct);
-            shipment = order is not null
-                ? await _db.Shipments.FirstOrDefaultAsync(s => s.OrderId == order.OrderId, ct)
-                : null;
+            order = await FindOrCreateOrderByReference(parsed.OrderReference, email, retailerContext, ct);
+            shipment ??= await _db.Shipments
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(s => s.OrderId == order.OrderId, ct);
         }
 
+        // If no shipment exists yet, create one from the delivery info
         if (shipment is null)
         {
-            _logger.LogWarning("Could not match delivery to shipment for email {id}", email.EmailMessageId);
-            await FlagForReview(email, "Could not match delivery to existing shipment", ct);
-            return order?.OrderId;
+            shipment = new Shipment
+            {
+                ShipmentId = Guid.NewGuid(),
+                TenantId = email.TenantId,
+                OrderId = order.OrderId,
+                TrackingNumber = parsed.TrackingNumber,
+                Status = ShipmentStatus.Delivered,
+                SourceEmailId = email.EmailMessageId
+            };
+            _db.Shipments.Add(shipment);
+            await _db.SaveChangesAsync(ct);
         }
 
         var deliveryStatus = ParseDeliveryStatus(parsed.Status);
         var issueType = ParseDeliveryIssueType(parsed.IssueType);
 
         // Check for existing delivery on this shipment
-        var delivery = await _db.Deliveries.FirstOrDefaultAsync(d => d.ShipmentId == shipment.ShipmentId, ct);
+        var delivery = await _db.Deliveries
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(d => d.ShipmentId == shipment.ShipmentId, ct);
 
         if (delivery is not null)
         {
@@ -472,12 +561,12 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
 
         var parsed = result.Data.Return;
 
-        // Find the order
-        var order = await FindOrderByReference(parsed.OrderReference, email.TenantId, ct);
+        // Find or create the order
+        var order = await FindOrCreateOrderByReference(parsed.OrderReference, email, retailerContext, ct);
         if (order is null)
         {
-            _logger.LogWarning("Could not match return to order: {orderRef}", parsed.OrderReference);
-            await FlagForReview(email, $"Could not match return to order: {parsed.OrderReference}", ct);
+            // Should never happen since FindOrCreate always returns an order, but just in case
+            await FlagForReview(email, $"Could not create order for return: {parsed.OrderReference}", ct);
             return null;
         }
 
@@ -486,6 +575,7 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
         if (!string.IsNullOrEmpty(parsed.RmaNumber))
         {
             returnEntity = await _db.Returns
+                .IgnoreQueryFilters()
                 .Include(r => r.Lines)
                 .FirstOrDefaultAsync(r => r.OrderId == order.OrderId && r.RMANumber == parsed.RmaNumber, ct);
         }
@@ -603,19 +693,14 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
 
         var parsed = result.Data.Refund;
 
-        var order = await FindOrderByReference(parsed.OrderReference, email.TenantId, ct);
-        if (order is null)
-        {
-            _logger.LogWarning("Could not match refund to order: {orderRef}", parsed.OrderReference);
-            await FlagForReview(email, $"Could not match refund to order: {parsed.OrderReference}", ct);
-            return null;
-        }
+        var order = await FindOrCreateOrderByReference(parsed.OrderReference, email, retailerContext, ct);
 
         // Find associated return by RMA if available
         Return? associatedReturn = null;
         if (!string.IsNullOrEmpty(parsed.ReturnRma))
         {
             associatedReturn = await _db.Returns
+                .IgnoreQueryFilters()
                 .FirstOrDefaultAsync(r => r.OrderId == order.OrderId && r.RMANumber == parsed.ReturnRma, ct);
         }
 
@@ -672,11 +757,10 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
 
         var parsed = result.Data.Cancellation;
 
-        var order = await FindOrderByReference(parsed.OrderReference, email.TenantId, ct);
+        var order = await FindOrCreateOrderByReference(parsed.OrderReference, email, retailerContext, ct);
         if (order is null)
         {
-            _logger.LogWarning("Could not match cancellation to order: {orderRef}", parsed.OrderReference);
-            await FlagForReview(email, $"Could not match cancellation to order: {parsed.OrderReference}", ct);
+            await FlagForReview(email, $"Could not create order for cancellation: {parsed.OrderReference}", ct);
             return null;
         }
 
@@ -740,54 +824,90 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
 
         var parsed = result.Data.Payment;
 
-        // Try to link to an existing order
-        var order = await FindOrderByReference(parsed.OrderReference, email.TenantId, ct);
-        if (order is not null)
-        {
-            order.PaymentMethodSummary = parsed.PaymentMethod;
-            order.LastUpdatedEmailId = email.EmailMessageId;
+        // Find or create order for payment
+        var order = await FindOrCreateOrderByReference(parsed.OrderReference, email, retailerContext, ct);
 
-            await CreateTimelineEvent(order.OrderId, email, "PaymentConfirmed",
-                $"Payment of {parsed.Amount:C} confirmed",
-                $"Method: {parsed.PaymentMethod}", ct);
+        order.PaymentMethodSummary = parsed.PaymentMethod;
+        order.LastUpdatedEmailId = email.EmailMessageId;
 
-            await _db.SaveChangesAsync(ct);
-            return order.OrderId;
-        }
+        await CreateTimelineEvent(order.OrderId, email, "PaymentConfirmed",
+            $"Payment of {parsed.Amount:C} confirmed",
+            $"Method: {parsed.PaymentMethod}", ct);
 
-        // Payment without matching order — just log it
-        _logger.LogInformation("Payment confirmation without matching order: {orderRef}", parsed.OrderReference);
-        return null;
+        await _db.SaveChangesAsync(ct);
+        return order.OrderId;
     }
 
     // ── Helper Methods ──
+
+    private static string NormalizeOrderNumber(string orderRef)
+    {
+        // Strip leading #, trim whitespace and special chars
+        return orderRef.TrimStart('#', ' ').Trim();
+    }
 
     private async Task<Order?> FindOrderByReference(string? orderReference, Guid tenantId, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(orderReference))
             return null;
 
-        // Normalize: strip leading #, trim whitespace
-        var normalized = orderReference.TrimStart('#').Trim();
+        var normalized = NormalizeOrderNumber(orderReference);
 
-        // Try exact match first
+        // Try exact match first, then normalized, then contains — all bypass RLS
         var order = await _db.Orders
+            .IgnoreQueryFilters()
             .Include(o => o.Lines)
-            .FirstOrDefaultAsync(o => o.ExternalOrderNumber == orderReference, ct);
-
-        if (order is not null) return order;
-
-        // Try without leading #
-        order = await _db.Orders
-            .Include(o => o.Lines)
-            .FirstOrDefaultAsync(o => o.ExternalOrderNumber == normalized, ct);
+            .Where(o => o.TenantId == tenantId)
+            .FirstOrDefaultAsync(o => o.ExternalOrderNumber == orderReference
+                || o.ExternalOrderNumber == normalized, ct);
 
         if (order is not null) return order;
 
         // Try contains match (for partial order numbers)
-        order = await _db.Orders
-            .Include(o => o.Lines)
-            .FirstOrDefaultAsync(o => o.ExternalOrderNumber.Contains(normalized), ct);
+        if (normalized.Length >= 5) // Avoid overly broad matches
+        {
+            order = await _db.Orders
+                .IgnoreQueryFilters()
+                .Include(o => o.Lines)
+                .Where(o => o.TenantId == tenantId)
+                .FirstOrDefaultAsync(o => o.ExternalOrderNumber.Contains(normalized), ct);
+        }
+
+        return order;
+    }
+
+    /// <summary>
+    /// Finds an existing order by reference, or creates a stub order if none exists.
+    /// This ensures shipment, delivery, return, and refund emails always have an order to attach to.
+    /// </summary>
+    private async Task<Order> FindOrCreateOrderByReference(
+        string? orderReference, EmailMessage email, string? retailerName, CancellationToken ct)
+    {
+        var existing = await FindOrderByReference(orderReference, email.TenantId, ct);
+        if (existing is not null) return existing;
+
+        // Create a stub order
+        var retailer = await _retailerMatcher.MatchAsync(email.FromAddress, ct);
+        var normalized = !string.IsNullOrWhiteSpace(orderReference) ? NormalizeOrderNumber(orderReference) : null;
+
+        var order = new Order
+        {
+            OrderId = Guid.NewGuid(),
+            TenantId = email.TenantId,
+            RetailerId = retailer?.RetailerId,
+            ExternalOrderNumber = normalized ?? $"UNKNOWN-{email.EmailMessageId:N}",
+            OrderDate = email.ReceivedAt,
+            Status = OrderStatus.Placed,
+            Currency = "USD",
+            SourceEmailId = email.EmailMessageId,
+            LastUpdatedEmailId = email.EmailMessageId
+        };
+
+        _db.Orders.Add(order);
+        await _db.SaveChangesAsync(ct);
+
+        await _log.Info(email.EmailMessageId, "OrderStubCreated",
+            $"Created stub order {order.OrderId} for ref '{orderReference}'");
 
         return order;
     }
@@ -815,6 +935,40 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
         email.ProcessingStatus = ProcessingStatus.ManualReview;
         email.ErrorDetails = reason;
         await _db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>
+    /// Adds line items from parsed data that don't already exist on the order.
+    /// Matches by product name (case-insensitive).
+    /// </summary>
+    private void AddNewLineItems(Order order, List<OrderLineData>? lines)
+    {
+        if (lines is null || lines.Count == 0) return;
+
+        var nextLineNum = (order.Lines?.Max(l => l.LineNumber) ?? 0) + 1;
+        foreach (var line in lines)
+        {
+            // Skip if a line with this product name already exists
+            var exists = order.Lines?.Any(l =>
+                l.ProductName.Contains(line.ProductName, StringComparison.OrdinalIgnoreCase)) ?? false;
+            if (exists) continue;
+
+            order.Lines ??= new List<OrderLine>();
+            order.Lines.Add(new OrderLine
+            {
+                OrderLineId = Guid.NewGuid(),
+                OrderId = order.OrderId,
+                LineNumber = nextLineNum++,
+                ProductName = line.ProductName,
+                ProductUrl = line.ProductUrl,
+                SKU = line.Sku,
+                Quantity = line.Quantity,
+                UnitPrice = line.UnitPrice,
+                LineTotal = line.LineTotal,
+                ImageUrl = line.ImageUrl,
+                Status = OrderLineStatus.Ordered
+            });
+        }
     }
 
     private void UpdateOrderFromParsed(Order order, OrderData parsed)

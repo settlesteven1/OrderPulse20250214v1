@@ -74,13 +74,28 @@ public class EmailBlobStorageService
             var uri = new Uri(blobUrl);
             // Extract blob name from the URL path (skip the container name segment)
             var pathSegments = uri.AbsolutePath.TrimStart('/').Split('/', 2);
-            if (pathSegments.Length < 2) return null;
+            if (pathSegments.Length < 2)
+            {
+                _logger.LogWarning("Blob URL has insufficient path segments: {url}", blobUrl);
+                return null;
+            }
 
-            var blobName = pathSegments[1]; // everything after container name
+            var blobName = Uri.UnescapeDataString(pathSegments[1]); // unescape %xx sequences
+            _logger.LogInformation("Fetching blob: container={container}, blobName={blobName}, url={url}",
+                _container.Name, blobName, blobUrl);
+
             var blob = _container.GetBlobClient(blobName);
+            var exists = await blob.ExistsAsync(ct);
+            if (!exists.Value)
+            {
+                _logger.LogWarning("Blob does not exist: {blobName}", blobName);
+                return null;
+            }
 
             var response = await blob.DownloadContentAsync(ct);
-            return response.Value.Content.ToString();
+            var content = response.Value.Content.ToString();
+            _logger.LogInformation("Blob retrieved: {len} chars", content?.Length ?? 0);
+            return content;
         }
         catch (Exception ex)
         {
