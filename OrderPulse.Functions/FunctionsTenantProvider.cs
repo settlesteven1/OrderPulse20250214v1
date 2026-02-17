@@ -4,12 +4,18 @@ namespace OrderPulse.Functions;
 
 /// <summary>
 /// Tenant provider for Azure Functions context.
-/// Returns Guid.Empty since Functions operate across all tenants
-/// (e.g., polling all tenant mailboxes). The Tenants table has no
-/// RLS policy, so queries against it work normally. For tenant-specific
-/// queries, the code uses IgnoreQueryFilters() and filters manually.
+/// Mutable so that functions can set the current tenant before
+/// performing tenant-scoped DB operations (required by RLS).
 /// </summary>
 public class FunctionsTenantProvider : ITenantProvider
 {
-    public Guid GetTenantId() => Guid.Empty;
+    private static readonly AsyncLocal<Guid> _currentTenantId = new();
+
+    public Guid GetTenantId() => _currentTenantId.Value;
+
+    /// <summary>
+    /// Sets the current tenant for the async execution context.
+    /// Must be called before any tenant-scoped DB writes.
+    /// </summary>
+    public static void SetCurrentTenant(Guid tenantId) => _currentTenantId.Value = tenantId;
 }

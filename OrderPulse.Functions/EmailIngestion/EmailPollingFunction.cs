@@ -81,6 +81,15 @@ public class EmailPollingFunction
             return;
         }
 
+        // Set the current tenant so RLS allows our DB operations
+        FunctionsTenantProvider.SetCurrentTenant(tenant.TenantId);
+
+        // Explicitly set SESSION_CONTEXT on the already-open connection
+        // (the interceptor only fires on connection open, which already happened)
+        await _db.Database.ExecuteSqlRawAsync(
+            "EXEC sp_set_session_context @key=N'TenantId', @value={0}",
+            tenant.TenantId.ToString());
+
         _logger.LogInformation("Polling mailbox {mailbox} for tenant {tenantId} (since {since})",
             tenant.PurchaseMailbox, tenant.TenantId, tenant.LastSyncAt);
 

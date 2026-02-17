@@ -24,8 +24,9 @@ builder.Services.AddScoped(sp =>
 builder.Services.AddMsalAuthentication(options =>
 {
     builder.Configuration.Bind("AzureEntraId", options.ProviderOptions.Authentication);
-    options.ProviderOptions.DefaultAccessTokenScopes.Add(
-        builder.Configuration["ApiScope"] ?? "api://orderpulse/.default");
+    var scopes = (builder.Configuration["ApiScope"] ?? "openid profile offline_access").Split(' ');
+    foreach (var scope in scopes)
+        options.ProviderOptions.DefaultAccessTokenScopes.Add(scope);
     options.ProviderOptions.LoginMode = "redirect";
 });
 

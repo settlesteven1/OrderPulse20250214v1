@@ -7,12 +7,12 @@
 
 <!-- Filter Chips -->
 <div class="filter-bar">
-    <button class="filter-chip @ActiveChipClass(null)" @onclick="() => SetShortcut(null)">All Orders</button>
-    <button class="filter-chip @ActiveChipClass("awaiting-delivery")" @onclick="() => SetShortcut(\"awaiting-delivery\")">Awaiting Delivery</button>
-    <button class="filter-chip @ActiveChipClass("needs-attention")" @onclick="() => SetShortcut(\"needs-attention\")">Needs Attention</button>
-    <button class="filter-chip @ActiveChipClass("open-returns")" @onclick="() => SetShortcut(\"open-returns\")">Open Returns</button>
-    <button class="filter-chip @ActiveChipClass("awaiting-refund")" @onclick="() => SetShortcut(\"awaiting-refund\")">Awaiting Refund</button>
-    <button class="filter-chip @ActiveChipClass("recently-delivered")" @onclick="() => SetShortcut(\"recently-delivered\")">Recently Delivered</button>
+    <button class="filter-chip @ActiveChipClass(null)" @onclick="@(() => SetShortcut(null))">All Orders</button>
+    <button class="filter-chip @ActiveChipClass("awaiting-delivery")" @onclick="@(() => SetShortcut("awaiting-delivery"))">Awaiting Delivery</button>
+    <button class="filter-chip @ActiveChipClass("needs-attention")" @onclick="@(() => SetShortcut("needs-attention"))">Needs Attention</button>
+    <button class="filter-chip @ActiveChipClass("open-returns")" @onclick="@(() => SetShortcut("open-returns"))">Open Returns</button>
+    <button class="filter-chip @ActiveChipClass("awaiting-refund")" @onclick="@(() => SetShortcut("awaiting-refund"))">Awaiting Refund</button>
+    <button class="filter-chip @ActiveChipClass("recently-delivered")" @onclick="@(() => SetShortcut("recently-delivered"))">Recently Delivered</button>
 </div>
 
 <!-- Search -->
@@ -61,7 +61,7 @@
             <tbody>
                 @foreach (var order in _orders)
                 {
-                    <tr @onclick="() => NavigateToOrder(order.OrderId)">
+                    <tr @onclick="@(() => NavigateToOrder(order.OrderId))">
                         <td>
                             <div class="font-semibold">@order.ExternalOrderNumber</div>
                             @if (order.FirstItemName is not null)
@@ -84,7 +84,7 @@
         {
             <div class="pagination" style="padding:1rem;">
                 <span>
-                    Showing @((_page - 1) * _pageSize + 1)–@Math.Min(_page * _pageSize, _pagination.TotalCount)
+                    Showing @((_page - 1) * _pageSize + 1) to @Math.Min(_page * _pageSize, _pagination.TotalCount)
                     of @_pagination.TotalCount
                 </span>
                 <div class="pagination-buttons">

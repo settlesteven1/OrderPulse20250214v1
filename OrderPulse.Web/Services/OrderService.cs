@@ -32,9 +32,9 @@ public class OrderService
         return (response?.Data ?? new(), response?.Pagination);
     }
 
-    public async Task<OrderDetail?> GetOrderDetailAsync(Guid orderId)
+    public async Task<OrderDetailModel?> GetOrderDetailModelAsync(Guid orderId)
     {
-        var response = await _http.GetFromJsonAsync<ApiResponse<OrderDetail>>($"api/orders/{orderId}");
+        var response = await _http.GetFromJsonAsync<ApiResponse<OrderDetailModel>>($"api/orders/{orderId}");
         return response?.Data;
     }
 

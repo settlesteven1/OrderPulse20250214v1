@@ -185,7 +185,55 @@ public record ReviewQueueItemDto(
     string ProcessingStatus
 );
 
+public record ReviewDetailDto(
+    Guid EmailMessageId,
+    string FromAddress,
+    string? FromDisplayName,
+    string Subject,
+    DateTime ReceivedAt,
+    string? BodyPreview,
+    string? BodyHtml,
+    string? ClassificationType,
+    decimal? ClassificationConfidence,
+    string ProcessingStatus,
+    string? ErrorDetails
+);
+
 public record ApproveReviewRequest(
     string? CorrectedClassification,
     string? CorrectedParsedDataJson
+);
+
+// ── Settings ──
+public record TenantSettingsDto(
+    string? ConnectedEmail,
+    DateTime? LastSyncAt,
+    string MailboxStatus,
+    int PollingIntervalMinutes,
+    bool WebhookEnabled,
+    bool NotifyDelivery,
+    bool NotifyShipment,
+    bool NotifyReturn,
+    bool NotifyRefund,
+    bool NotifyIssues
+);
+
+public record TenantSettingsUpdateDto(
+    int PollingIntervalMinutes,
+    bool WebhookEnabled,
+    bool NotifyDelivery,
+    bool NotifyShipment,
+    bool NotifyReturn,
+    bool NotifyRefund,
+    bool NotifyIssues
+);
+
+public record HistoricalImportRequestDto(
+    DateTime StartDate,
+    DateTime EndDate
+);
+
+public record HistoricalImportResultDto(
+    int EmailsQueued,
+    string? Message
 );

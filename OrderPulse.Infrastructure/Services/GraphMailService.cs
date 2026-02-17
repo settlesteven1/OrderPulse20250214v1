@@ -95,18 +95,8 @@ public class GraphMailService
             catch (Microsoft.Graph.Models.ODataErrors.ODataError ex)
                 when (ex.ResponseStatusCode == 429 && attempt < MaxRetries)
             {
-                // Extract Retry-After header if available, otherwise use exponential backoff
-                var retryAfterSeconds = Math.Pow(2, attempt + 1); // 2, 4, 8 seconds
-
-                // Check for Retry-After in the error headers
-                if (ex.Headers?.TryGetValue("Retry-After", out var retryValues) == true)
-                {
-                    var retryHeader = retryValues.FirstOrDefault();
-                    if (int.TryParse(retryHeader, out var headerSeconds))
-                    {
-                        retryAfterSeconds = headerSeconds;
-                    }
-                }
+                // Use exponential backoff: 2, 4, 8 seconds
+                var retryAfterSeconds = Math.Pow(2, attempt + 1);
 
                 _logger.LogWarning(
                     "Graph API throttled (429) on attempt {attempt}. Retrying in {delay}s",

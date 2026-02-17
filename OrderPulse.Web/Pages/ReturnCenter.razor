@@ -15,19 +15,19 @@
 
 <!-- Tabs -->
 <div class="return-tabs">
-    <button class="return-tab @ActiveTabClass("NeedToShip")" @onclick="() => SetTab(\"NeedToShip\")">
+    <button class="return-tab @ActiveTabClass("NeedToShip")" @onclick="@(() => SetTab("NeedToShip"))">
         Need to Ship @CountBadge(_needToShipCount)
     </button>
-    <button class="return-tab @ActiveTabClass("Shipped")" @onclick="() => SetTab(\"Shipped\")">
+    <button class="return-tab @ActiveTabClass("Shipped")" @onclick="@(() => SetTab("Shipped"))">
         Shipped / In Transit
     </button>
-    <button class="return-tab @ActiveTabClass("AwaitingRefund")" @onclick="() => SetTab(\"AwaitingRefund\")">
+    <button class="return-tab @ActiveTabClass("AwaitingRefund")" @onclick="@(() => SetTab("AwaitingRefund"))">
         Awaiting Refund
     </button>
-    <button class="return-tab @ActiveTabClass("Completed")" @onclick="() => SetTab(\"Completed\")">
+    <button class="return-tab @ActiveTabClass("Completed")" @onclick="@(() => SetTab("Completed"))">
         Completed
     </button>
-    <button class="return-tab @ActiveTabClass("Rejected")" @onclick="() => SetTab(\"Rejected\")">
+    <button class="return-tab @ActiveTabClass("Rejected")" @onclick="@(() => SetTab("Rejected"))">
         Rejected
     </button>
 </div>
@@ -128,7 +128,7 @@ else
                             @(ret.ReturnCarrier ?? "Carrier"):
                             @if (ret.ReturnTrackingUrl is not null)
                             {
-                                <a href="@ret.ReturnTrackingUrl" target="_blank" style="color:var(--blue);">@ret.ReturnTrackingNumber ↗</a>
+                                <a href="@ret.ReturnTrackingUrl" target="_blank" style="color:var(--blue);">@ret.ReturnTrackingNumber</a>
                             }
                             else
                             {
@@ -152,7 +152,7 @@ else
                 {
                     <div class="return-card-footer">
                         <span class="text-xs text-muted">Refund estimate</span>
-                        <span class="font-semibold">$@ret.EstimatedRefundAmount?.ToString("N2")</span>
+                        <span class="font-semibold">$@(ret.EstimatedRefundAmount.Value.ToString("N2"))</span>
                     </div>
                 }
             </div>
@@ -282,7 +282,6 @@ else
             {
                 _returns = await ReturnSvc.GetOpenLabelsAsync();
                 _needToShipCount = _returns.Count;
-                // Sort by deadline urgency
                 _returns = _returns
                     .OrderBy(r => r.ReturnByDate ?? DateOnly.MaxValue)
                     .ToList();
@@ -315,7 +314,6 @@ else
     private void PrintAllLabels()
     {
         // TODO: Generate combined PDF of all labels via API
-        // For now, could trigger browser print
     }
 
     private string ActiveTabClass(string tab) => _activeTab == tab ? "active" : "";
@@ -325,23 +323,17 @@ else
     private static string GetDeadlineClass(DateOnly date)
     {
         var daysLeft = (date.ToDateTime(TimeOnly.MinValue) - DateTime.UtcNow).TotalDays;
-        return daysLeft switch
-        {
-            <= 2 => "urgent",
-            <= 5 => "warning",
-            _ => "ok"
-        };
+        if (daysLeft <= 2) return "urgent";
+        if (daysLeft <= 5) return "warning";
+        return "ok";
     }
 
     private static string GetDeadlineText(DateOnly date)
     {
         var daysLeft = (int)(date.ToDateTime(TimeOnly.MinValue) - DateTime.UtcNow).TotalDays;
-        return daysLeft switch
-        {
-            < 0 => "OVERDUE",
-            0 => "Due today",
-            1 => "1 day left",
-            _ => $"{daysLeft} days left"
-        };
+        if (daysLeft < 0) return "OVERDUE";
+        if (daysLeft == 0) return "Due today";
+        if (daysLeft == 1) return "1 day left";
+        return $"{daysLeft} days left";
     }
 }

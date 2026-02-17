@@ -1,4 +1,5 @@
 using Microsoft.Azure.Functions.Worker;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using OrderPulse.Domain.Enums;
 using OrderPulse.Domain.Interfaces;
@@ -42,12 +43,22 @@ public class EmailClassifierFunction
 
         _logger.LogInformation("Classifying email {id}", id);
 
-        var email = await _db.EmailMessages.FindAsync(new object[] { id }, ct);
+        // Use IgnoreQueryFilters to find the email regardless of tenant filter,
+        // then set the tenant context for subsequent writes
+        var email = await _db.EmailMessages
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(e => e.EmailMessageId == id, ct);
         if (email is null)
         {
             _logger.LogWarning("Email {id} not found", id);
             return null;
         }
+
+        // Set tenant context so RLS allows our DB writes
+        FunctionsTenantProvider.SetCurrentTenant(email.TenantId);
+        await _db.Database.ExecuteSqlRawAsync(
+            "EXEC sp_set_session_context @key=N'TenantId', @value={0}",
+            email.TenantId.ToString());
 
         try
         {

@@ -1,8 +1,10 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using OrderPulse.Api.DTOs;
 using OrderPulse.Domain.Enums;
 using OrderPulse.Domain.Interfaces;
+using OrderPulse.Infrastructure.Data;
 
 namespace OrderPulse.Api.Controllers;
 
@@ -13,11 +15,13 @@ public class DashboardController : ControllerBase
 {
     private readonly IOrderRepository _orderRepo;
     private readonly IReturnRepository _returnRepo;
+    private readonly OrderPulseDbContext _db;
 
-    public DashboardController(IOrderRepository orderRepo, IReturnRepository returnRepo)
+    public DashboardController(IOrderRepository orderRepo, IReturnRepository returnRepo, OrderPulseDbContext db)
     {
         _orderRepo = orderRepo;
         _returnRepo = returnRepo;
+        _db = db;
     }
 
     [HttpGet("summary")]
@@ -52,5 +56,25 @@ public class DashboardController : ControllerBase
         );
 
         return Ok(new ApiResponse<DashboardSummaryDto>(dto));
+    }
+
+    [HttpGet("activity")]
+    public async Task<ActionResult<ApiResponse<List<TimelineEventDto>>>> GetRecentActivity(
+        [FromQuery] int count = 20, CancellationToken ct = default)
+    {
+        var events = await _db.OrderEvents
+            .OrderByDescending(e => e.EventDate)
+            .Take(count)
+            .Select(e => new TimelineEventDto(
+                e.EventId,
+                e.EventType,
+                e.EventDate,
+                e.Summary ?? "",
+                e.EntityType,
+                e.EntityId
+            ))
+            .ToListAsync(ct);
+
+        return Ok(new ApiResponse<List<TimelineEventDto>>(events));
     }
 }

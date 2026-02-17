@@ -46,7 +46,7 @@ public class OrderListItem
     public DateOnly? EstimatedDeliveryEnd { get; set; }
 }
 
-public class OrderDetail
+public class OrderDetailModel
 {
     public Guid OrderId { get; set; }
     public string ExternalOrderNumber { get; set; } = string.Empty;

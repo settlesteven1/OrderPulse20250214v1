@@ -279,7 +279,7 @@ else
     [Parameter] public Guid OrderId { get; set; }
     [Inject] private OrderService OrderSvc { get; set; } = default!;
 
-    private OrderDetail? _order;
+    private OrderDetailModel? _order;
     private List<TimelineEvent> _timeline = new();
     private bool _loading = true;
 
@@ -287,7 +287,7 @@ else
     {
         try
         {
-            _order = await OrderSvc.GetOrderDetailAsync(OrderId);
+            _order = await OrderSvc.GetOrderDetailModelAsync(OrderId);
             if (_order is not null)
             {
                 _timeline = await OrderSvc.GetTimelineAsync(OrderId);
