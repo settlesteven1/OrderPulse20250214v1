@@ -134,12 +134,15 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
                 body.Length > 1000 ? body[..1000] : body);
 
             // Route to the appropriate parser
-            var orderId = await RouteAndProcessAsync(email, body, retailerContext, ct);
+            var orderIds = await RouteAndProcessAsync(email, body, retailerContext, ct);
 
-            if (orderId.HasValue)
+            if (orderIds.Count > 0)
             {
-                await _log.Success(emailMessageId, "OrderCreated", $"Order ID: {orderId.Value}");
-                await _stateMachine.RecalculateStatusAsync(orderId.Value, ct);
+                foreach (var oid in orderIds)
+                {
+                    await _log.Success(emailMessageId, "OrderCreated", $"Order ID: {oid}");
+                    await _stateMachine.RecalculateStatusAsync(oid, ct);
+                }
             }
             else
             {
@@ -167,15 +170,19 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
         }
     }
 
-    private async Task<Guid?> RouteAndProcessAsync(
+    private async Task<List<Guid>> RouteAndProcessAsync(
         EmailMessage email, string body, string? retailerContext, CancellationToken ct)
     {
-        return email.ClassificationType switch
+        // ProcessOrderAsync now handles multi-order internally and returns all created order IDs
+        if (email.ClassificationType is EmailClassificationType.OrderConfirmation
+            or EmailClassificationType.OrderModification)
         {
-            EmailClassificationType.OrderConfirmation or
-            EmailClassificationType.OrderModification
-                => await ProcessOrderAsync(email, body, retailerContext, ct),
+            return await ProcessOrderAsync(email, body, retailerContext, ct);
+        }
 
+        // All other types return a single order ID
+        Guid? singleId = email.ClassificationType switch
+        {
             EmailClassificationType.ShipmentConfirmation or
             EmailClassificationType.ShipmentUpdate
                 => await ProcessShipmentAsync(email, body, retailerContext, ct),
@@ -199,42 +206,76 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
             EmailClassificationType.PaymentConfirmation
                 => await ProcessPaymentAsync(email, body, retailerContext, ct),
 
-            EmailClassificationType.Promotional => null, // Should not reach here
+            EmailClassificationType.Promotional => null,
 
             _ => throw new InvalidOperationException(
                 $"Unknown classification type: {email.ClassificationType}")
         };
+
+        return singleId.HasValue ? new List<Guid> { singleId.Value } : new List<Guid>();
     }
 
     // ── Order Confirmation / Modification ──
 
-    private async Task<Guid?> ProcessOrderAsync(
+    private async Task<List<Guid>> ProcessOrderAsync(
         EmailMessage email, string body, string? retailerContext, CancellationToken ct)
     {
         await _log.Info(email.EmailMessageId, "OrderParser", $"Calling order parser with {body.Length} chars body");
         var result = await _orderParser.ParseAsync(email.Subject, body, email.FromAddress, retailerContext, ct);
 
-        await _log.Info(email.EmailMessageId, "OrderParser",
-            $"Parser returned: Confidence={result.Confidence}, NeedsReview={result.NeedsReview}, HasData={result.Data != null}, HasOrder={result.Data?.Order != null}, Lines={result.Data?.Lines?.Count ?? 0}",
-            $"ErrorMessage: {result.ErrorMessage ?? "none"}, OrderNumber: {result.Data?.Order?.ExternalOrderNumber ?? "null"}, Total: {result.Data?.Order?.TotalAmount}");
-
-        if (result.Data?.Order is null)
+        if (result.Data is null)
         {
-            await _log.Error(email.EmailMessageId, "OrderParser", "Order parser returned no data — flagging for review");
+            await _log.Error(email.EmailMessageId, "OrderParser", "Order parser returned null data — flagging for review");
             await FlagForReview(email, "Order parser returned no data", ct);
-            return null;
+            return new List<Guid>();
+        }
+
+        // Normalize into a list of orders (handles both single and multi-order emails)
+        var allOrders = result.Data.GetAllOrders();
+
+        await _log.Info(email.EmailMessageId, "OrderParser",
+            $"Parser returned: Confidence={result.Confidence}, NeedsReview={result.NeedsReview}, OrderCount={allOrders.Count}",
+            $"ErrorMessage: {result.ErrorMessage ?? "none"}, OrderNumbers: {string.Join(", ", allOrders.Select(o => o.Order.ExternalOrderNumber ?? "null"))}");
+
+        if (allOrders.Count == 0)
+        {
+            await _log.Error(email.EmailMessageId, "OrderParser", "Order parser returned no orders — flagging for review");
+            await FlagForReview(email, "Order parser returned no data", ct);
+            return new List<Guid>();
         }
 
         if (result.NeedsReview)
         {
             await _log.Warn(email.EmailMessageId, "OrderParser", $"Low confidence {result.Confidence} — flagging for review");
             await FlagForReview(email, $"Low confidence: {result.Confidence}", ct);
-            return null;
+            return new List<Guid>();
         }
 
-        var parsed = result.Data.Order;
         var retailer = await _retailerMatcher.MatchAsync(email.FromAddress, ct);
+        var createdIds = new List<Guid>();
 
+        foreach (var entry in allOrders)
+        {
+            var orderId = await ProcessSingleOrder(entry.Order, entry.Lines, email, retailer, ct);
+            if (orderId.HasValue) createdIds.Add(orderId.Value);
+        }
+
+        if (allOrders.Count > 1)
+        {
+            await _log.Info(email.EmailMessageId, "OrderParser",
+                $"Multi-order email: created/updated {allOrders.Count} orders, {createdIds.Count} IDs returned");
+        }
+
+        return createdIds;
+    }
+
+    /// <summary>
+    /// Processes a single order from parsed data. Handles dedup, modification, and creation.
+    /// </summary>
+    private async Task<Guid?> ProcessSingleOrder(
+        OrderData parsed, List<OrderLineData> lines, EmailMessage email,
+        Retailer? retailer, CancellationToken ct)
+    {
         // Try to find existing order by order number (normalize and bypass RLS)
         var normalized = !string.IsNullOrWhiteSpace(parsed.ExternalOrderNumber)
             ? NormalizeOrderNumber(parsed.ExternalOrderNumber) : null;
@@ -266,7 +307,7 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
         {
             // Link email and add any new line items not already on the order
             existingOrder.LastUpdatedEmailId = email.EmailMessageId;
-            AddNewLineItems(existingOrder, result.Data.Lines);
+            AddNewLineItems(existingOrder, lines);
             await _db.SaveChangesAsync(ct);
             return existingOrder.OrderId;
         }
@@ -277,7 +318,7 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
             OrderId = Guid.NewGuid(),
             TenantId = email.TenantId,
             RetailerId = retailer?.RetailerId,
-            ExternalOrderNumber = parsed.ExternalOrderNumber,
+            ExternalOrderNumber = normalized ?? parsed.ExternalOrderNumber,
             ExternalOrderUrl = parsed.ExternalOrderUrl,
             OrderDate = TryParseDate(parsed.OrderDate) ?? email.ReceivedAt,
             Status = OrderStatus.Placed,
@@ -297,7 +338,7 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
 
         // Add line items
         int lineNum = 1;
-        foreach (var line in result.Data.Lines)
+        foreach (var line in lines)
         {
             order.Lines.Add(new OrderLine
             {
@@ -321,6 +362,10 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
             "Order placed", $"Order #{parsed.ExternalOrderNumber} confirmed", ct);
 
         await _db.SaveChangesAsync(ct);
+
+        await _log.Info(email.EmailMessageId, "OrderCreated",
+            $"Created order {order.OrderId} — #{order.ExternalOrderNumber} with {lines.Count} lines");
+
         return order.OrderId;
     }
 
@@ -945,7 +990,7 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
     {
         if (lines is null || lines.Count == 0) return;
 
-        var nextLineNum = (order.Lines?.Max(l => l.LineNumber) ?? 0) + 1;
+        var nextLineNum = (order.Lines?.Any() == true ? order.Lines.Max(l => l.LineNumber) : 0) + 1;
         foreach (var line in lines)
         {
             // Skip if a line with this product name already exists

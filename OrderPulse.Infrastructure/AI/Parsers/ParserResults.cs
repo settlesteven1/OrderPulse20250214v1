@@ -9,10 +9,47 @@ namespace OrderPulse.Infrastructure.AI.Parsers;
 
 public class OrderParserResult
 {
+    /// <summary>Single order (legacy / simple emails)</summary>
     public OrderData? Order { get; set; }
+    /// <summary>Line items for the single order</summary>
     public List<OrderLineData> Lines { get; set; } = new();
+
+    /// <summary>
+    /// Multiple orders extracted from a single email (e.g. Amazon splitting one purchase
+    /// across multiple fulfillers). Each entry has its own order data and line items.
+    /// When this is populated, Order/Lines above may be null.
+    /// </summary>
+    public List<OrderWithLines>? Orders { get; set; }
+
     public double Confidence { get; set; }
     public string? Notes { get; set; }
+
+    /// <summary>
+    /// Returns all orders in a normalized list, whether they came from the single Order
+    /// property or from the Orders array.
+    /// </summary>
+    public List<OrderWithLines> GetAllOrders()
+    {
+        var result = new List<OrderWithLines>();
+        if (Orders is not null && Orders.Count > 0)
+        {
+            result.AddRange(Orders);
+        }
+        else if (Order is not null)
+        {
+            result.Add(new OrderWithLines { Order = Order, Lines = Lines });
+        }
+        return result;
+    }
+}
+
+/// <summary>
+/// Groups an order with its line items, used for multi-order emails.
+/// </summary>
+public class OrderWithLines
+{
+    public OrderData Order { get; set; } = new();
+    public List<OrderLineData> Lines { get; set; } = new();
 }
 
 public class OrderData

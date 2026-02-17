@@ -22,7 +22,15 @@ EXTRACTION RULES:
 - Shipping address should be the full address as a single string.
 - If this is an ORDER MODIFICATION, set is_modification to true and note what changed.
 
-OUTPUT SCHEMA:
+MULTI-ORDER EMAILS:
+Some retailers (especially Amazon) split a single purchase into multiple orders based on fulfiller/seller.
+A single email may contain MULTIPLE distinct order numbers. When this happens:
+- Use the "orders" array (NOT the single "order" object) to return each order separately.
+- Each entry in "orders" has its own "order" object and "lines" array.
+- Each order should have its own order number, totals, and line items.
+- If there is only ONE order in the email, use the standard "order" + "lines" format.
+
+OUTPUT SCHEMA (single order):
 {
   "order": {
     "external_order_number": "string",
@@ -56,7 +64,36 @@ OUTPUT SCHEMA:
   "notes": "string | null"
 }
 
-If there are multiple items, include ALL of them in the lines array.
+OUTPUT SCHEMA (multiple orders in one email):
+{
+  "orders": [
+    {
+      "order": {
+        "external_order_number": "string",
+        "retailer_name": "string | null",
+        "order_date": "YYYY-MM-DD | null",
+        "subtotal": number | null,
+        "tax_amount": number | null,
+        "shipping_cost": number | null,
+        "discount_amount": number | null,
+        "total_amount": number | null,
+        "currency": "USD",
+        "estimated_delivery_start": "YYYY-MM-DD | null",
+        "estimated_delivery_end": "YYYY-MM-DD | null",
+        "shipping_address": "string | null",
+        "payment_method_summary": "string | null",
+        "external_order_url": "string | null",
+        "is_modification": false
+      },
+      "lines": [...]
+    }
+  ],
+  "confidence": 0.95,
+  "notes": "string | null"
+}
+
+If there are multiple items within a single order, include ALL of them in that order's lines array.
+If there are multiple ORDERS in the email, use the "orders" array format.
 ```
 
 ## Few-Shot Examples
@@ -193,5 +230,148 @@ Paid with PayPal
   ],
   "confidence": 0.94,
   "notes": "Order date not explicitly stated in email. Discount code SAVE5 was applied."
+}
+```
+
+### Example 3 — Amazon Multi-Order Email (Split by Fulfiller)
+**Input:**
+```
+Subject: Your Amazon.com order of "Widget Pro..." and 2 more items
+From: auto-confirm@amazon.com
+
+Thank you for your order!
+
+Order #112-1111111-1111111 (Fulfilled by Amazon)
+Arriving Feb 15
+
+Widget Pro Max
+Qty: 1
+$29.99
+
+Order Total: $32.39
+
+---
+
+Order #112-2222222-2222222 (Sold by TechCo, Fulfilled by Amazon)
+Arriving Feb 17
+
+USB-C Charging Cable 6ft
+Qty: 2
+$8.99 each
+
+Order Total: $19.38
+
+---
+
+Order #112-3333333-3333333 (Sold by HomeGoods Direct)
+Arriving Feb 20-22
+
+Bamboo Desk Organizer
+Qty: 1
+$24.99
+
+Order Total: $26.99
+
+Shipping to: Steven S., 123 Main St, Austin TX 78701
+Payment: Visa ending in 4242
+```
+
+**Output:**
+```json
+{
+  "orders": [
+    {
+      "order": {
+        "external_order_number": "112-1111111-1111111",
+        "retailer_name": "Amazon",
+        "order_date": null,
+        "subtotal": 29.99,
+        "tax_amount": 2.40,
+        "shipping_cost": null,
+        "discount_amount": null,
+        "total_amount": 32.39,
+        "currency": "USD",
+        "estimated_delivery_start": "2026-02-15",
+        "estimated_delivery_end": "2026-02-15",
+        "shipping_address": "Steven S., 123 Main St, Austin TX 78701",
+        "payment_method_summary": "Visa ending in 4242",
+        "external_order_url": null,
+        "is_modification": false
+      },
+      "lines": [
+        {
+          "product_name": "Widget Pro Max",
+          "product_url": null,
+          "sku": null,
+          "quantity": 1,
+          "unit_price": 29.99,
+          "line_total": 29.99,
+          "image_url": null
+        }
+      ]
+    },
+    {
+      "order": {
+        "external_order_number": "112-2222222-2222222",
+        "retailer_name": "Amazon (TechCo)",
+        "order_date": null,
+        "subtotal": 17.98,
+        "tax_amount": 1.40,
+        "shipping_cost": null,
+        "discount_amount": null,
+        "total_amount": 19.38,
+        "currency": "USD",
+        "estimated_delivery_start": "2026-02-17",
+        "estimated_delivery_end": "2026-02-17",
+        "shipping_address": "Steven S., 123 Main St, Austin TX 78701",
+        "payment_method_summary": "Visa ending in 4242",
+        "external_order_url": null,
+        "is_modification": false
+      },
+      "lines": [
+        {
+          "product_name": "USB-C Charging Cable 6ft",
+          "product_url": null,
+          "sku": null,
+          "quantity": 2,
+          "unit_price": 8.99,
+          "line_total": 17.98,
+          "image_url": null
+        }
+      ]
+    },
+    {
+      "order": {
+        "external_order_number": "112-3333333-3333333",
+        "retailer_name": "Amazon (HomeGoods Direct)",
+        "order_date": null,
+        "subtotal": 24.99,
+        "tax_amount": 2.00,
+        "shipping_cost": null,
+        "discount_amount": null,
+        "total_amount": 26.99,
+        "currency": "USD",
+        "estimated_delivery_start": "2026-02-20",
+        "estimated_delivery_end": "2026-02-22",
+        "shipping_address": "Steven S., 123 Main St, Austin TX 78701",
+        "payment_method_summary": "Visa ending in 4242",
+        "external_order_url": null,
+        "is_modification": false
+      },
+      "lines": [
+        {
+          "product_name": "Bamboo Desk Organizer",
+          "product_url": null,
+          "sku": null,
+          "quantity": 1,
+          "unit_price": 24.99,
+          "line_total": 24.99,
+          "image_url": null
+        }
+      ]
+    }
+  ],
+  "confidence": 0.93,
+  "notes": "Single email contained 3 separate Amazon orders split by fulfiller/seller."
 }
 ```
