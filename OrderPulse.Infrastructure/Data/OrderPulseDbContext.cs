@@ -43,6 +43,22 @@ public class OrderPulseDbContext : DbContext
         modelBuilder.Entity<Refund>().HasQueryFilter(e => e.TenantId == tenantId);
         modelBuilder.Entity<OrderEvent>().HasQueryFilter(e => e.TenantId == tenantId);
 
+        // ── Disable SQL OUTPUT clause for all RLS-protected tables ──
+        // EF Core 8 uses OUTPUT INSERTED.* to read back store-generated values
+        // (e.g. CreatedAt/UpdatedAt defaults). SQL Server RLS FILTER predicates
+        // apply to OUTPUT, causing 0 rows returned → DbUpdateConcurrencyException.
+        // Disabling OUTPUT makes EF use separate SELECT after INSERT/UPDATE instead.
+        modelBuilder.Entity<EmailMessage>().ToTable(tb => tb.UseSqlOutputClause(false));
+        modelBuilder.Entity<Order>().ToTable(tb => tb.UseSqlOutputClause(false));
+        modelBuilder.Entity<OrderLine>().ToTable(tb => tb.UseSqlOutputClause(false));
+        modelBuilder.Entity<Shipment>().ToTable(tb => tb.UseSqlOutputClause(false));
+        modelBuilder.Entity<ShipmentLine>().ToTable(tb => tb.UseSqlOutputClause(false));
+        modelBuilder.Entity<Delivery>().ToTable(tb => tb.UseSqlOutputClause(false));
+        modelBuilder.Entity<Return>().ToTable(tb => tb.UseSqlOutputClause(false));
+        modelBuilder.Entity<ReturnLine>().ToTable(tb => tb.UseSqlOutputClause(false));
+        modelBuilder.Entity<Refund>().ToTable(tb => tb.UseSqlOutputClause(false));
+        modelBuilder.Entity<OrderEvent>().ToTable(tb => tb.UseSqlOutputClause(false));
+
         // ── Tenant ──
         modelBuilder.Entity<Tenant>(entity =>
         {

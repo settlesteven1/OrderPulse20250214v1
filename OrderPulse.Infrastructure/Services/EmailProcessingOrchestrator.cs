@@ -74,7 +74,13 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
             return;
         }
 
-        // Set SESSION_CONTEXT for all subsequent DB operations
+        // Open the connection manually and keep it open for the entire processing run.
+        // This ensures SESSION_CONTEXT persists — if EF opens/closes connections between
+        // SaveChangesAsync calls, the connection pool's sp_reset_connection clears it.
+        var conn = _db.Database.GetDbConnection();
+        if (conn.State != System.Data.ConnectionState.Open)
+            await conn.OpenAsync(ct);
+
         await _db.Database.ExecuteSqlRawAsync(
             "EXEC sp_set_session_context @key=N'TenantId', @value={0}",
             email.TenantId.ToString());
@@ -149,6 +155,16 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
                 await _log.Warn(emailMessageId, "RouteResult", "No order ID returned from parser");
             }
 
+            // Reload email in case it was detached during order processing
+            var emailEntry = _db.ChangeTracker.Entries<EmailMessage>()
+                .FirstOrDefault(e => e.Entity.EmailMessageId == emailMessageId);
+            if (emailEntry is null)
+            {
+                email = await _db.EmailMessages
+                    .IgnoreQueryFilters()
+                    .FirstAsync(e => e.EmailMessageId == emailMessageId, ct);
+            }
+
             email.ProcessingStatus = ProcessingStatus.Parsed;
             email.ProcessedAt = DateTime.UtcNow;
             await _db.SaveChangesAsync(ct);
@@ -162,10 +178,34 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
             var fullError = $"{ex.GetType().Name}: {ex.Message} | Inner: {innerMsg}" +
                 (innerInner != null ? $" | InnerInner: {innerInner}" : "");
             await _log.Error(emailMessageId, "Fatal", fullError, ex.StackTrace);
-            email.ProcessingStatus = ProcessingStatus.Failed;
-            email.ErrorDetails = ex.Message;
-            email.RetryCount++;
-            await _db.SaveChangesAsync(ct);
+
+            try
+            {
+                // Detach all tracked entities to clear dirty state, then reload email
+                foreach (var entry in _db.ChangeTracker.Entries().ToList())
+                    entry.State = Microsoft.EntityFrameworkCore.EntityState.Detached;
+
+                // Re-set SESSION_CONTEXT in case the connection was recycled
+                await _db.Database.ExecuteSqlRawAsync(
+                    "EXEC sp_set_session_context @key=N'TenantId', @value={0}",
+                    email.TenantId.ToString());
+
+                var freshEmail = await _db.EmailMessages
+                    .IgnoreQueryFilters()
+                    .FirstOrDefaultAsync(e => e.EmailMessageId == emailMessageId, ct);
+                if (freshEmail is not null)
+                {
+                    freshEmail.ProcessingStatus = ProcessingStatus.Failed;
+                    freshEmail.ErrorDetails = ex.Message;
+                    freshEmail.RetryCount++;
+                    await _db.SaveChangesAsync(ct);
+                }
+            }
+            catch (Exception saveEx)
+            {
+                await _log.Error(emailMessageId, "Fatal",
+                    $"Failed to update email status after error: {saveEx.Message}");
+            }
             throw;
         }
     }
@@ -256,8 +296,26 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
 
         foreach (var entry in allOrders)
         {
-            var orderId = await ProcessSingleOrder(entry.Order, entry.Lines, email, retailer, ct);
-            if (orderId.HasValue) createdIds.Add(orderId.Value);
+            try
+            {
+                // Detach all tracked entities before each order to prevent cross-contamination.
+                // Re-set SESSION_CONTEXT since the connection may have been affected.
+                foreach (var tracked in _db.ChangeTracker.Entries().ToList())
+                    tracked.State = Microsoft.EntityFrameworkCore.EntityState.Detached;
+                await _db.Database.ExecuteSqlRawAsync(
+                    $"EXEC sp_set_session_context @key=N'TenantId', @value='{email.TenantId}'");
+
+                var orderId = await ProcessSingleOrder(entry.Order, entry.Lines, email, retailer, ct);
+                if (orderId.HasValue) createdIds.Add(orderId.Value);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to process order {orderNum} from multi-order email",
+                    entry.Order.ExternalOrderNumber);
+                await _log.Error(email.EmailMessageId, "OrderParser",
+                    $"Failed to process order #{entry.Order.ExternalOrderNumber}: {ex.GetType().Name}: {ex.Message}");
+                // Continue processing remaining orders
+            }
         }
 
         if (allOrders.Count > 1)
@@ -283,7 +341,6 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
         var existingOrder = normalized != null
             ? await _db.Orders
                 .IgnoreQueryFilters()
-                .Include(o => o.Lines)
                 .Where(o => o.TenantId == email.TenantId)
                 .FirstOrDefaultAsync(o => o.ExternalOrderNumber == normalized
                     || o.ExternalOrderNumber == parsed.ExternalOrderNumber, ct)
@@ -305,10 +362,35 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
 
         if (existingOrder is not null)
         {
-            // Link email and add any new line items not already on the order
+            // Enrich stub orders with full parsed data (amounts, dates, address, etc.)
+            UpdateOrderFromParsed(existingOrder, parsed);
             existingOrder.LastUpdatedEmailId = email.EmailMessageId;
             AddNewLineItems(existingOrder, lines);
+
+            // Diagnostic: verify SESSION_CONTEXT before save on existing order
+            try
+            {
+                var connState = _db.Database.GetDbConnection().State;
+                var sessionCtx = await _db.Database.SqlQueryRaw<string>(
+                    "SELECT CAST(SESSION_CONTEXT(N'TenantId') AS NVARCHAR(100)) AS Value")
+                    .FirstOrDefaultAsync(ct);
+                var trackedEntities = _db.ChangeTracker.Entries()
+                    .Where(e => e.State != Microsoft.EntityFrameworkCore.EntityState.Unchanged)
+                    .Select(e => $"{e.Entity.GetType().Name}:{e.State}")
+                    .ToList();
+                await _log.Info(email.EmailMessageId, "DiagPreSave",
+                    $"ExistingOrder path: ConnState={connState}, SessionCtx={sessionCtx ?? "NULL"}, TrackedChanges={string.Join(", ", trackedEntities)}");
+            }
+            catch (Exception diagEx)
+            {
+                await _log.Warn(email.EmailMessageId, "DiagPreSave", $"Diagnostic failed: {diagEx.Message}");
+            }
+
             await _db.SaveChangesAsync(ct);
+
+            await _log.Info(email.EmailMessageId, "OrderCreated",
+                $"Enriched existing order {existingOrder.OrderId} — #{existingOrder.ExternalOrderNumber} with {lines.Count} lines");
+
             return existingOrder.OrderId;
         }
 
@@ -360,6 +442,25 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
 
         await CreateTimelineEvent(order.OrderId, email, "OrderPlaced",
             "Order placed", $"Order #{parsed.ExternalOrderNumber} confirmed", ct);
+
+        // Diagnostic: verify SESSION_CONTEXT and connection state before save
+        try
+        {
+            var connState = _db.Database.GetDbConnection().State;
+            var sessionCtx = await _db.Database.SqlQueryRaw<string>(
+                "SELECT CAST(SESSION_CONTEXT(N'TenantId') AS NVARCHAR(100)) AS Value")
+                .FirstOrDefaultAsync(ct);
+            var trackedEntities = _db.ChangeTracker.Entries()
+                .Where(e => e.State != Microsoft.EntityFrameworkCore.EntityState.Unchanged)
+                .Select(e => $"{e.Entity.GetType().Name}:{e.State}")
+                .ToList();
+            await _log.Info(email.EmailMessageId, "DiagPreSave",
+                $"ConnState={connState}, SessionCtx={sessionCtx ?? "NULL"}, TrackedChanges={string.Join(", ", trackedEntities)}");
+        }
+        catch (Exception diagEx)
+        {
+            await _log.Warn(email.EmailMessageId, "DiagPreSave", $"Diagnostic failed: {diagEx.Message}");
+        }
 
         await _db.SaveChangesAsync(ct);
 
@@ -983,8 +1084,8 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
     }
 
     /// <summary>
-    /// Adds line items from parsed data that don't already exist on the order.
-    /// Matches by product name (case-insensitive).
+    /// Adds line items from parsed data. Uses DbContext directly to ensure
+    /// EF tracks the new entities even when the order's Lines collection wasn't loaded.
     /// </summary>
     private void AddNewLineItems(Order order, List<OrderLineData>? lines)
     {
@@ -993,13 +1094,12 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
         var nextLineNum = (order.Lines?.Any() == true ? order.Lines.Max(l => l.LineNumber) : 0) + 1;
         foreach (var line in lines)
         {
-            // Skip if a line with this product name already exists
+            // Skip if a line with this product name already exists (when Lines are loaded)
             var exists = order.Lines?.Any(l =>
                 l.ProductName.Contains(line.ProductName, StringComparison.OrdinalIgnoreCase)) ?? false;
             if (exists) continue;
 
-            order.Lines ??= new List<OrderLine>();
-            order.Lines.Add(new OrderLine
+            var orderLine = new OrderLine
             {
                 OrderLineId = Guid.NewGuid(),
                 OrderId = order.OrderId,
@@ -1012,7 +1112,9 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
                 LineTotal = line.LineTotal,
                 ImageUrl = line.ImageUrl,
                 Status = OrderLineStatus.Ordered
-            });
+            };
+            // Add via DbContext directly so EF tracks it even without Include(o => o.Lines)
+            _db.OrderLines.Add(orderLine);
         }
     }
 
