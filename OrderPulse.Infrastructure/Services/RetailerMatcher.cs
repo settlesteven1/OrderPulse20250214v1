@@ -21,10 +21,31 @@ public class RetailerMatcher
 
     public async Task<Retailer?> MatchAsync(string fromAddress, CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(fromAddress))
+        return await MatchAsync(fromAddress, originalFromAddress: null, ct);
+    }
+
+    public async Task<Retailer?> MatchAsync(string fromAddress, string? originalFromAddress, CancellationToken ct = default)
+    {
+        // Try the primary from address first
+        var result = await MatchByAddressAsync(fromAddress, ct);
+        if (result is not null)
+            return result;
+
+        // Fall back to original sender address (for forwarded emails)
+        if (!string.IsNullOrWhiteSpace(originalFromAddress))
+        {
+            result = await MatchByAddressAsync(originalFromAddress, ct);
+        }
+
+        return result;
+    }
+
+    private async Task<Retailer?> MatchByAddressAsync(string? address, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(address))
             return null;
 
-        var domain = fromAddress.Split('@').LastOrDefault()?.ToLowerInvariant();
+        var domain = address.Split('@').LastOrDefault()?.ToLowerInvariant();
         if (domain is null)
             return null;
 
