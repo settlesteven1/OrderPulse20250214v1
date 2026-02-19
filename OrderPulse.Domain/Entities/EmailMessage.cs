@@ -10,6 +10,7 @@ public class EmailMessage
     public string? InternetMessageId { get; set; }
     public string FromAddress { get; set; } = string.Empty;
     public string? FromDisplayName { get; set; }
+    public string? OriginalFromAddress { get; set; }
     public string Subject { get; set; } = string.Empty;
     public DateTime ReceivedAt { get; set; }
     public string BodyBlobUrl { get; set; } = string.Empty;

@@ -59,7 +59,8 @@ public class GraphMailService
                         config.QueryParameters.Select = new[]
                         {
                             "id", "from", "subject", "receivedDateTime",
-                            "body", "bodyPreview", "hasAttachments", "internetMessageId"
+                            "body", "bodyPreview", "hasAttachments", "internetMessageId",
+                            "internetMessageHeaders"
                         };
                         config.QueryParameters.Top = MaxMessagesPerPoll;
                         config.QueryParameters.Orderby = new[] { "receivedDateTime asc" };

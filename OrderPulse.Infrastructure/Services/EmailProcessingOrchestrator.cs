@@ -97,10 +97,13 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
             await _db.SaveChangesAsync(ct);
 
             // Match retailer
-            var retailer = await _retailerMatcher.MatchAsync(email.FromAddress, ct);
+            var retailer = await _retailerMatcher.MatchAsync(email.FromAddress, email.OriginalFromAddress, ct);
             var retailerContext = retailer?.Name;
-            await _log.Info(emailMessageId, "RetailerMatch",
-                retailer != null ? $"Matched retailer: {retailer.Name}" : $"No retailer match for {email.FromAddress}");
+            var matchSource = retailer != null
+                ? $"Matched retailer: {retailer.Name}"
+                : $"No retailer match for {email.FromAddress}" +
+                  (email.OriginalFromAddress != null ? $" (original: {email.OriginalFromAddress})" : "");
+            await _log.Info(emailMessageId, "RetailerMatch", matchSource);
 
             // Retrieve full body from Blob Storage, fall back to preview
             var body = email.BodyPreview ?? "";
@@ -255,7 +258,7 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
             return new List<Guid>();
         }
 
-        var retailer = await _retailerMatcher.MatchAsync(email.FromAddress, ct);
+        var retailer = await _retailerMatcher.MatchAsync(email.FromAddress, email.OriginalFromAddress, ct);
         var createdIds = new List<Guid>();
 
         foreach (var entry in allOrders)
