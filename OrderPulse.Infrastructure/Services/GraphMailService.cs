@@ -50,6 +50,7 @@ public class GraphMailService
         {
             var response = await ExecuteWithRetryAsync(async () =>
                 await _client.Users[mailboxAddress]
+                    .MailFolders["Inbox"]
                     .Messages
                     .GetAsync(config =>
                     {
