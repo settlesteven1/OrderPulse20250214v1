@@ -46,7 +46,7 @@ jobs:
       #
       # Fallback: to use a publish profile instead, remove the azure/login step,
       # drop the permissions block, and replace the deploy step with:
-      #   - uses: azure/functions-action@v2
+      #   - uses: azure/functions-action@v1
       #     with:
       #       app-name: func-orderpulse
       #       publish-profile: ${{ secrets.FUNCTIONS_PUBLISH_PROFILE }}
@@ -59,7 +59,7 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Deploy to Azure Functions
-        uses: azure/functions-action@v2
+        uses: azure/functions-action@v1
         with:
           app-name: func-orderpulse
           package: ./publish/functions
