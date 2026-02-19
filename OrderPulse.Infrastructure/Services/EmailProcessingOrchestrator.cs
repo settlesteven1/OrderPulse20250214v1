@@ -995,8 +995,8 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
         var existing = await FindOrderByReference(orderReference, email.TenantId, ct);
         if (existing is not null) return existing;
 
-        // Create a stub order — marked IsInferred so it can be enriched later
-        var retailer = await _retailerMatcher.MatchAsync(email.FromAddress, ct);
+        // Create a stub order
+        var retailer = await _retailerMatcher.MatchAsync(email.FromAddress, email.OriginalFromAddress, ct);
         var normalized = !string.IsNullOrWhiteSpace(orderReference) ? NormalizeOrderNumber(orderReference) : null;
 
         var order = new Order
