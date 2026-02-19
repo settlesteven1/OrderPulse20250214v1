@@ -4,6 +4,7 @@ public enum OrderLineStatus
 {
     Ordered,
     Shipped,
+    OutForDelivery,
     Delivered,
     Cancelled,
     ReturnInitiated,
