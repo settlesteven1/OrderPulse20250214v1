@@ -269,7 +269,7 @@ public class EmailPollingFunction
 
     /// <summary>
     /// Extracts an email address from a string that may contain a display name.
-    /// E.g., "Amazon.com <auto-confirm@amazon.com>" → "auto-confirm@amazon.com"
+    /// E.g., "Amazon.com &lt;auto-confirm@amazon.com&gt;" → "auto-confirm@amazon.com"
     /// </summary>
     private static string? ExtractEmailFromString(string value)
     {
