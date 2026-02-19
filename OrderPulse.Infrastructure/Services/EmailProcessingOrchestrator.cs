@@ -137,6 +137,18 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
                 $"Source: {bodySource}, Length: {body.Length} chars",
                 body.Length > 1000 ? body[..1000] : body);
 
+            // Pre-process forwarded emails: strip forwarding headers and extract the original body
+            if (ForwardedEmailHelper.IsForwardedSubject(email.Subject) || body.Length > 20_000)
+            {
+                var originalLength = body.Length;
+                body = ForwardedEmailHelper.ExtractOriginalBody(body);
+                if (body.Length < originalLength)
+                {
+                    await _log.Info(emailMessageId, "ForwardStrip",
+                        $"Stripped forwarding preamble: {originalLength} → {body.Length} chars");
+                }
+            }
+
             // Route to the appropriate parser
             var orderIds = await RouteAndProcessAsync(email, body, retailerContext, ct);
 

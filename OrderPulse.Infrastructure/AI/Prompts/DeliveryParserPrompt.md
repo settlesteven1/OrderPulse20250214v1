@@ -17,6 +17,15 @@ EXTRACTION RULES:
 - If a delivery photo URL is referenced, extract it
 - Dates should be in ISO 8601 format
 
+FORWARDED EMAILS:
+- Emails may have been forwarded by the user. The body may contain forwarding headers such as "---------- Forwarded message ---------", "-----Original Message-----", or "Begin forwarded message:".
+- If present, ignore the forwarding wrapper and extract data from the ORIGINAL email content.
+- The From address in the user prompt may be the forwarder (e.g. a personal Gmail), not the retailer. Look inside the body for the original sender.
+- Look for Amazon delivery patterns: "Your package was delivered", order references like "#112-XXXXXXX-XXXXXXX", UPS/USPS/FedEx tracking numbers.
+
+RETAILER CONTEXT:
+- If a "Known retailer context" line is provided, use it as a hint for which retailer patterns to look for.
+
 OUTPUT SCHEMA:
 {
   "delivery": {
@@ -70,7 +79,45 @@ Tracking: 1Z999AA10123456784
 }
 ```
 
-### Example 2 — Delivery Exception
+### Example 2 — Forwarded Delivery Email
+**Input:**
+```
+Subject: Fwd: Delivered: Your Amazon package
+From: user@gmail.com
+
+---------- Forwarded message ---------
+From: delivery-notification@amazon.com
+Date: Fri, Feb 14, 2026, 3:15 PM
+Subject: Delivered: Your Amazon package
+To: user@gmail.com
+
+Your package was delivered.
+Delivered: February 14, 2026 at 3:12 PM
+To: Mailroom
+Order #112-5678901-2345678
+Tracking: 9400111899223100012345
+```
+
+**Output:**
+```json
+{
+  "delivery": {
+    "order_reference": "#112-5678901-2345678",
+    "tracking_number": "9400111899223100012345",
+    "delivery_date": "2026-02-14T15:12:00Z",
+    "delivery_location": "Mailroom",
+    "status": "Delivered",
+    "issue_type": null,
+    "issue_description": null,
+    "signed_by": null,
+    "photo_url": null
+  },
+  "confidence": 0.97,
+  "notes": "Extracted from forwarded Amazon delivery notification."
+}
+```
+
+### Example 3 — Delivery Exception
 **Input:**
 ```
 Subject: Delivery issue with your order #112-9387462
