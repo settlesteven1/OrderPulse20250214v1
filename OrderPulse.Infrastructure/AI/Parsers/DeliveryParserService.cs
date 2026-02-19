@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using OrderPulse.Domain.Interfaces;
+using OrderPulse.Infrastructure.Services;
 
 namespace OrderPulse.Infrastructure.AI.Parsers;
 
@@ -23,7 +24,14 @@ public class DeliveryParserService : IEmailParser<DeliveryParserResult>
     public async Task<ParseResult<DeliveryParserResult>> ParseAsync(
         string subject, string body, string fromAddress, string? retailerContext, CancellationToken ct = default)
     {
-        var userPrompt = $"Subject: {subject}\nFrom: {fromAddress}\n\nEmail Body:\n{body}";
+        // Clean forwarding artifacts from the subject
+        var cleanedSubject = ForwardedEmailHelper.IsForwardedSubject(subject)
+            ? ForwardedEmailHelper.CleanSubject(subject)
+            : subject;
+
+        var userPrompt = $"Subject: {cleanedSubject}\nFrom: {fromAddress}\n\nEmail Body:\n{body}";
+        if (!string.IsNullOrEmpty(retailerContext))
+            userPrompt += $"\n\nKnown retailer context: {retailerContext}";
 
         try
         {
