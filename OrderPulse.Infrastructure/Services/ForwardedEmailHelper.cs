@@ -10,9 +10,11 @@ public static partial class ForwardedEmailHelper
 {
     /// <summary>
     /// Maximum body length to send to AI parsers. Bodies exceeding this
-    /// are truncated after forwarding-header stripping.
+    /// are truncated after HTML stripping and forwarding-header removal.
+    /// Increased from 20K to 30K to accommodate product line-item data
+    /// that appears deep in Amazon's HTML structure.
     /// </summary>
-    private const int MaxBodyLength = 20_000;
+    private const int MaxBodyLength = 30_000;
 
     // ── Forwarding header patterns ──
 
@@ -44,6 +46,34 @@ public static partial class ForwardedEmailHelper
         RegexOptions.IgnoreCase | RegexOptions.Singleline)]
     private static partial Regex HtmlGmailQuote();
 
+    // ── HTML stripping patterns ──
+
+    // <style> blocks (often 5-15KB of CSS in Amazon emails)
+    [GeneratedRegex(@"<style[^>]*>[\s\S]*?</style>", RegexOptions.IgnoreCase)]
+    private static partial Regex StyleBlocks();
+
+    // <script> blocks
+    [GeneratedRegex(@"<script[^>]*>[\s\S]*?</script>", RegexOptions.IgnoreCase)]
+    private static partial Regex ScriptBlocks();
+
+    // HTML comments (<!-- ... -->), including conditional comments
+    [GeneratedRegex(@"<!--[\s\S]*?-->")]
+    private static partial Regex HtmlComments();
+
+    // Tracking pixels: <img> tags with width/height of 0 or 1
+    [GeneratedRegex(
+        @"<img\s[^>]*(?:width\s*=\s*[""']?[01]|height\s*=\s*[""']?[01])[^>]*/?\s*>",
+        RegexOptions.IgnoreCase)]
+    private static partial Regex TrackingPixels();
+
+    // Runs of whitespace (spaces, tabs, newlines) — collapse to single space
+    [GeneratedRegex(@"[ \t]{2,}")]
+    private static partial Regex ExcessiveSpaces();
+
+    // Collapse 3+ consecutive newlines to 2
+    [GeneratedRegex(@"(\r?\n){3,}")]
+    private static partial Regex ExcessiveNewlines();
+
     /// <summary>
     /// Determines whether the subject line indicates a forwarded email.
     /// </summary>
@@ -63,8 +93,9 @@ public static partial class ForwardedEmailHelper
 
     /// <summary>
     /// Pre-processes an email body to extract the original forwarded content,
-    /// stripping forwarding headers and preamble. If the body is not a forwarded
-    /// email, it is returned as-is (potentially truncated).
+    /// stripping forwarding headers, preamble, and HTML bloat (CSS, scripts,
+    /// comments, tracking pixels). This preserves the actual visible content
+    /// (product names, prices, order details) that AI parsers need.
     /// </summary>
     public static string ExtractOriginalBody(string body)
     {
@@ -79,11 +110,44 @@ public static partial class ForwardedEmailHelper
                ?? TryStripForwardingPreamble(cleaned, AppleForwardMarker())
                ?? cleaned;
 
+        // Strip HTML bloat before truncating — this preserves the actual content
+        // (product names, prices, etc.) that would otherwise be cut off
+        cleaned = StripHtmlBloat(cleaned);
+
         // Truncate if still too long
         if (cleaned.Length > MaxBodyLength)
             cleaned = cleaned[..MaxBodyLength];
 
         return cleaned;
+    }
+
+    /// <summary>
+    /// Removes non-content HTML elements that consume space without carrying
+    /// useful data for AI parsers: CSS, scripts, comments, tracking pixels,
+    /// and excessive whitespace. Typically reduces Amazon HTML emails from
+    /// 70-90KB to 15-25KB while preserving all visible text.
+    /// </summary>
+    private static string StripHtmlBloat(string html)
+    {
+        var result = html;
+
+        // Remove <style> blocks — often 5-15KB of CSS in retailer emails
+        result = StyleBlocks().Replace(result, "");
+
+        // Remove <script> blocks
+        result = ScriptBlocks().Replace(result, "");
+
+        // Remove HTML comments (including conditional IE comments)
+        result = HtmlComments().Replace(result, "");
+
+        // Remove tracking pixels (1x1 or 0x0 images)
+        result = TrackingPixels().Replace(result, "");
+
+        // Collapse excessive whitespace
+        result = ExcessiveSpaces().Replace(result, " ");
+        result = ExcessiveNewlines().Replace(result, "\n\n");
+
+        return result.Trim();
     }
 
     private static string? TryStripForwardingPreamble(string body, Regex markerPattern)
