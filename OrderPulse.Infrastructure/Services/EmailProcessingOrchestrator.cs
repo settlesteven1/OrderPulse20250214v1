@@ -144,8 +144,10 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
                 body = ForwardedEmailHelper.ExtractOriginalBody(body);
                 if (body.Length < originalLength)
                 {
+                    var preview = body.Length > 500 ? body[..500] : body;
                     await _log.Info(emailMessageId, "ForwardStrip",
-                        $"Stripped forwarding preamble: {originalLength} → {body.Length} chars");
+                        $"Stripped: {originalLength} → {body.Length} chars",
+                        $"First 500 chars: {preview}");
                 }
             }
 
@@ -242,6 +244,16 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
         await _log.Info(email.EmailMessageId, "OrderParser", $"Calling order parser with {body.Length} chars body");
         var result = await _orderParser.ParseAsync(email.Subject, body, email.FromAddress, retailerContext, ct);
 
+        // Detailed diagnostic logging for parser response
+        var dataNull = result.Data is null;
+        var orderNull = result.Data?.Order is null;
+        var linesCount = result.Data?.Lines?.Count ?? 0;
+        var ordersCount = result.Data?.Orders?.Count ?? 0;
+        var orderNum = result.Data?.Order?.ExternalOrderNumber ?? "(null)";
+        await _log.Info(email.EmailMessageId, "OrderParser",
+            $"AI response: Data={!dataNull}, Order={!orderNull}, Lines={linesCount}, Orders={ordersCount}, OrderNum={orderNum}, Confidence={result.Confidence}",
+            $"ErrorMessage: {result.ErrorMessage ?? "none"}, NeedsReview: {result.NeedsReview}");
+
         if (result.Data is null)
         {
             await _log.Error(email.EmailMessageId, "OrderParser", "Order parser returned null data — flagging for review");
@@ -253,8 +265,8 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
         var allOrders = result.Data.GetAllOrders();
 
         await _log.Info(email.EmailMessageId, "OrderParser",
-            $"Parser returned: Confidence={result.Confidence}, NeedsReview={result.NeedsReview}, OrderCount={allOrders.Count}",
-            $"ErrorMessage: {result.ErrorMessage ?? "none"}, OrderNumbers: {string.Join(", ", allOrders.Select(o => o.Order.ExternalOrderNumber ?? "null"))}");
+            $"Normalized: {allOrders.Count} order(s), Lines per order: [{string.Join(", ", allOrders.Select(o => o.Lines?.Count ?? 0))}]",
+            $"OrderNumbers: {string.Join(", ", allOrders.Select(o => o.Order.ExternalOrderNumber ?? "null"))}");
 
         if (allOrders.Count == 0)
         {
@@ -376,6 +388,12 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
         };
 
         // Add line items
+        if (lines.Count == 0)
+        {
+            await _log.Warn(email.EmailMessageId, "OrderLines",
+                $"Parser returned 0 line items for order #{parsed.ExternalOrderNumber} — order will have no lines");
+        }
+
         int lineNum = 1;
         foreach (var line in lines)
         {
@@ -403,7 +421,8 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
         await _db.SaveChangesAsync(ct);
 
         await _log.Info(email.EmailMessageId, "OrderCreated",
-            $"Created order {order.OrderId} — #{order.ExternalOrderNumber} with {lines.Count} lines");
+            $"Created order {order.OrderId} — #{order.ExternalOrderNumber} with {order.Lines.Count} lines",
+            lines.Count > 0 ? $"Products: {string.Join("; ", lines.Select(l => $"{l.ProductName} x{l.Quantity}"))}" : "NO LINE ITEMS");
 
         return order.OrderId;
     }
@@ -413,9 +432,19 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
     private async Task<Guid?> ProcessShipmentAsync(
         EmailMessage email, string body, string? retailerContext, CancellationToken ct)
     {
+        await _log.Info(email.EmailMessageId, "ShipmentParser", $"Calling shipment parser with {body.Length} chars body");
         var result = await _shipmentParser.ParseAsync(email.Subject, body, email.FromAddress, retailerContext, ct);
+
+        var shipmentCount = result.Data?.Shipments?.Count ?? 0;
+        var itemCounts = result.Data?.Shipments?.Select(s => s.Items?.Count ?? 0).ToList() ?? new List<int>();
+        var orderRefs = result.Data?.Shipments?.Select(s => s.OrderReference ?? "(null)").ToList() ?? new List<string>();
+        await _log.Info(email.EmailMessageId, "ShipmentParser",
+            $"AI response: Shipments={shipmentCount}, ItemsPerShipment=[{string.Join(", ", itemCounts)}], Confidence={result.Confidence}",
+            $"OrderRefs: [{string.Join(", ", orderRefs)}], ErrorMessage: {result.ErrorMessage ?? "none"}");
+
         if (result.Data?.Shipments is null || result.Data.Shipments.Count == 0)
         {
+            await _log.Error(email.EmailMessageId, "ShipmentParser", "Shipment parser returned no data — flagging for review");
             await FlagForReview(email, "Shipment parser returned no data", ct);
             return null;
         }
@@ -521,8 +550,10 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
         var result = await _deliveryParser.ParseAsync(email.Subject, body, email.FromAddress, retailerContext, ct);
 
         await _log.Info(email.EmailMessageId, "DeliveryParser",
-            $"Parser returned: Confidence={result.Confidence}, NeedsReview={result.NeedsReview}, HasData={result.Data != null}, HasDelivery={result.Data?.Delivery != null}",
-            $"ErrorMessage: {result.ErrorMessage ?? "none"}, TrackingNumber: {result.Data?.Delivery?.TrackingNumber ?? "null"}, OrderRef: {result.Data?.Delivery?.OrderReference ?? "null"}");
+            $"AI response: HasData={result.Data != null}, HasDelivery={result.Data?.Delivery != null}, Confidence={result.Confidence}",
+            $"OrderRef: {result.Data?.Delivery?.OrderReference ?? "(null)"}, Tracking: {result.Data?.Delivery?.TrackingNumber ?? "(null)"}, " +
+            $"Status: {result.Data?.Delivery?.Status ?? "(null)"}, Location: {result.Data?.Delivery?.DeliveryLocation ?? "(null)"}, " +
+            $"ErrorMessage: {result.ErrorMessage ?? "none"}");
 
         if (result.Data?.Delivery is null)
         {
