@@ -307,8 +307,16 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
         {
             // Link email and add any new line items not already on the order
             existingOrder.LastUpdatedEmailId = email.EmailMessageId;
+            var hadLines = existingOrder.Lines?.Count > 0;
             AddNewLineItems(existingOrder, lines);
             await _db.SaveChangesAsync(ct);
+
+            // If this enrichment added lines to a stub, retroactively link orphaned shipments/returns
+            if (!hadLines && existingOrder.Lines?.Count > 0)
+            {
+                await LinkOrphanedRecordsToLinesAsync(existingOrder, email, ct);
+            }
+
             return existingOrder.OrderId;
         }
 
@@ -1014,6 +1022,147 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
                 Status = OrderLineStatus.Ordered
             });
         }
+    }
+
+    /// <summary>
+    /// After a stub order is enriched with line items, retroactively links any existing
+    /// Shipment or Return records that were created before the order had lines.
+    /// Re-parses the source emails to recover item data for matching.
+    /// </summary>
+    private async Task LinkOrphanedRecordsToLinesAsync(Order order, EmailMessage triggerEmail, CancellationToken ct)
+    {
+        var orderId = order.OrderId;
+        var tenantId = order.TenantId;
+
+        // Find shipments on this order with zero ShipmentLine records
+        var orphanedShipments = await _db.Shipments
+            .IgnoreQueryFilters()
+            .Include(s => s.Lines)
+            .Where(s => s.OrderId == orderId && s.TenantId == tenantId && s.Lines.Count == 0)
+            .ToListAsync(ct);
+
+        // Find returns on this order with zero ReturnLine records
+        var orphanedReturns = await _db.Returns
+            .IgnoreQueryFilters()
+            .Include(r => r.Lines)
+            .Where(r => r.OrderId == orderId && r.TenantId == tenantId && r.Lines.Count == 0)
+            .ToListAsync(ct);
+
+        if (orphanedShipments.Count == 0 && orphanedReturns.Count == 0)
+            return;
+
+        await _log.Info(triggerEmail.EmailMessageId, "RetroactiveLink",
+            $"Found {orphanedShipments.Count} orphaned shipment(s) and {orphanedReturns.Count} orphaned return(s) for order {orderId}");
+
+        var retailer = await _retailerMatcher.MatchAsync(triggerEmail.FromAddress, ct);
+        var retailerContext = retailer?.Name;
+        var linkedCount = 0;
+
+        // Retroactively link orphaned shipments
+        foreach (var shipment in orphanedShipments)
+        {
+            var sourceEmail = await _db.EmailMessages
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(e => e.EmailMessageId == shipment.SourceEmailId, ct);
+
+            if (sourceEmail is null) continue;
+
+            var body = await FetchEmailBodyAsync(sourceEmail, ct);
+            if (string.IsNullOrEmpty(body)) continue;
+
+            var result = await _shipmentParser.ParseAsync(sourceEmail.Subject, body, sourceEmail.FromAddress, retailerContext, ct);
+            if (result.Data?.Shipments is null) continue;
+
+            // Match items from all shipments in the parsed result that correspond to this shipment
+            // (match by tracking number if available, otherwise use all items)
+            var matchingShipmentData = result.Data.Shipments
+                .FirstOrDefault(s => !string.IsNullOrEmpty(shipment.TrackingNumber)
+                    && s.TrackingNumber == shipment.TrackingNumber)
+                ?? result.Data.Shipments.FirstOrDefault();
+
+            if (matchingShipmentData is null) continue;
+
+            foreach (var item in matchingShipmentData.Items)
+            {
+                var orderLine = order.Lines?.FirstOrDefault(l =>
+                    l.ProductName.Contains(item.ProductName, StringComparison.OrdinalIgnoreCase));
+                if (orderLine is not null)
+                {
+                    _db.ShipmentLines.Add(new ShipmentLine
+                    {
+                        ShipmentLineId = Guid.NewGuid(),
+                        ShipmentId = shipment.ShipmentId,
+                        OrderLineId = orderLine.OrderLineId,
+                        Quantity = item.Quantity
+                    });
+                    linkedCount++;
+                }
+            }
+        }
+
+        // Retroactively link orphaned returns
+        foreach (var returnEntity in orphanedReturns)
+        {
+            var sourceEmail = await _db.EmailMessages
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(e => e.EmailMessageId == returnEntity.SourceEmailId, ct);
+
+            if (sourceEmail is null) continue;
+
+            var body = await FetchEmailBodyAsync(sourceEmail, ct);
+            if (string.IsNullOrEmpty(body)) continue;
+
+            var result = await _returnParser.ParseAsync(sourceEmail.Subject, body, sourceEmail.FromAddress, retailerContext, ct);
+            if (result.Data?.Items is null) continue;
+
+            foreach (var item in result.Data.Items)
+            {
+                var orderLine = order.Lines?.FirstOrDefault(l =>
+                    l.ProductName.Contains(item.ProductName, StringComparison.OrdinalIgnoreCase));
+                if (orderLine is not null)
+                {
+                    returnEntity.Lines.Add(new ReturnLine
+                    {
+                        ReturnLineId = Guid.NewGuid(),
+                        ReturnId = returnEntity.ReturnId,
+                        OrderLineId = orderLine.OrderLineId,
+                        Quantity = item.Quantity,
+                        ReturnReason = item.ReturnReason
+                    });
+                    orderLine.Status = OrderLineStatus.ReturnInitiated;
+                    linkedCount++;
+                }
+            }
+        }
+
+        if (linkedCount > 0)
+        {
+            await _db.SaveChangesAsync(ct);
+            await _log.Info(triggerEmail.EmailMessageId, "RetroactiveLink",
+                $"Linked {linkedCount} line(s) to orphaned shipments/returns for order {orderId}");
+        }
+    }
+
+    /// <summary>
+    /// Fetches the full email body from blob storage, falling back to the body preview.
+    /// </summary>
+    private async Task<string?> FetchEmailBodyAsync(EmailMessage email, CancellationToken ct)
+    {
+        if (!string.IsNullOrEmpty(email.BodyBlobUrl))
+        {
+            try
+            {
+                var body = await _blobStorage.GetEmailBodyAsync(email.BodyBlobUrl, ct);
+                if (!string.IsNullOrEmpty(body))
+                    return body;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to fetch blob for email {id}, falling back to preview", email.EmailMessageId);
+            }
+        }
+
+        return email.BodyPreview;
     }
 
     private void UpdateOrderFromParsed(Order order, OrderData parsed)
