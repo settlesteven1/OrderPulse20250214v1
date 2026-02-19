@@ -24,6 +24,11 @@ public class Return
     public string? RejectionReason { get; set; }
     public Guid? SourceEmailId { get; set; }
     public Guid? LastUpdatedEmailId { get; set; }
+    /// <summary>
+    /// JSON-serialized parsed return item data from the original email.
+    /// Used for reconciliation when return processes before order confirmation.
+    /// </summary>
+    public string? ParsedItemsJson { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
