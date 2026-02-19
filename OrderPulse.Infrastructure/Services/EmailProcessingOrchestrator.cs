@@ -452,6 +452,8 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
                             OrderLineId = orderLine.OrderLineId,
                             Quantity = item.Quantity
                         });
+                        orderLine.Status = OrderLineStatus.Shipped;
+                        orderLine.UpdatedAt = DateTime.UtcNow;
                     }
                 }
 
@@ -570,6 +572,23 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
             ? ShipmentStatus.Delivered
             : ShipmentStatus.Exception;
         shipment.UpdatedAt = DateTime.UtcNow;
+
+        // Update order line statuses for all lines linked to this shipment
+        if (deliveryStatus == DeliveryStatus.Delivered)
+        {
+            var shipmentLines = await _db.ShipmentLines
+                .Where(sl => sl.ShipmentId == shipment.ShipmentId)
+                .Include(sl => sl.OrderLine)
+                .ToListAsync(ct);
+            foreach (var sl in shipmentLines)
+            {
+                if (sl.OrderLine is not null)
+                {
+                    sl.OrderLine.Status = OrderLineStatus.Delivered;
+                    sl.OrderLine.UpdatedAt = DateTime.UtcNow;
+                }
+            }
+        }
 
         var eventType = deliveryStatus == DeliveryStatus.Delivered ? "Delivered" : "DeliveryIssue";
         var summary = deliveryStatus == DeliveryStatus.Delivered
