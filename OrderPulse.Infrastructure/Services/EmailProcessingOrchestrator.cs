@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using OrderPulse.Domain.Entities;
@@ -141,6 +142,9 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
                 foreach (var oid in orderIds)
                 {
                     await _log.Success(emailMessageId, "OrderCreated", $"Order ID: {oid}");
+                    // Reconcile orphaned shipment/return lines before recalculating status,
+                    // since the state machine uses ShipmentLines to compute order status
+                    await ReconcileOrderAsync(oid, emailMessageId, ct);
                     await _stateMachine.RecalculateStatusAsync(oid, ct);
                 }
             }
@@ -305,6 +309,18 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
 
         if (existingOrder is not null)
         {
+            // If this was a stub order created by a shipment/return before the order
+            // confirmation arrived, enrich it with the full order data
+            if (existingOrder.IsInferred)
+            {
+                UpdateOrderFromParsed(existingOrder, parsed);
+                existingOrder.IsInferred = false;
+                existingOrder.OrderDate = TryParseDate(parsed.OrderDate) ?? existingOrder.OrderDate;
+                existingOrder.ExternalOrderUrl = parsed.ExternalOrderUrl ?? existingOrder.ExternalOrderUrl;
+                await _log.Info(email.EmailMessageId, "StubEnriched",
+                    $"Enriched stub order {existingOrder.OrderId} — #{existingOrder.ExternalOrderNumber}");
+            }
+
             // Link email and add any new line items not already on the order
             existingOrder.LastUpdatedEmailId = email.EmailMessageId;
             var hadLines = existingOrder.Lines?.Count > 0;
@@ -442,7 +458,10 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
                     ShipDate = TryParseDate(shipmentData.ShipDate),
                     EstimatedDelivery = TryParseDateOnly(shipmentData.EstimatedDelivery),
                     Status = shipmentStatus,
-                    SourceEmailId = email.EmailMessageId
+                    SourceEmailId = email.EmailMessageId,
+                    ParsedItemsJson = shipmentData.Items.Count > 0
+                        ? JsonSerializer.Serialize(shipmentData.Items)
+                        : null
                 };
                 _db.Shipments.Add(shipment);
 
@@ -680,7 +699,10 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
                 DropOffLocation = parsed.DropOffLocation,
                 DropOffAddress = parsed.DropOffAddress,
                 SourceEmailId = email.EmailMessageId,
-                LastUpdatedEmailId = email.EmailMessageId
+                LastUpdatedEmailId = email.EmailMessageId,
+                ParsedItemsJson = result.Data.Items.Count > 0
+                    ? JsonSerializer.Serialize(result.Data.Items)
+                    : null
             };
 
             if (parsed.QrCodeInEmail)
@@ -939,7 +961,7 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
         var existing = await FindOrderByReference(orderReference, email.TenantId, ct);
         if (existing is not null) return existing;
 
-        // Create a stub order
+        // Create a stub order — marked IsInferred so it can be enriched later
         var retailer = await _retailerMatcher.MatchAsync(email.FromAddress, ct);
         var normalized = !string.IsNullOrWhiteSpace(orderReference) ? NormalizeOrderNumber(orderReference) : null;
 
@@ -951,6 +973,7 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
             ExternalOrderNumber = normalized ?? $"UNKNOWN-{email.EmailMessageId:N}",
             OrderDate = email.ReceivedAt,
             Status = OrderStatus.Placed,
+            IsInferred = true,
             Currency = "USD",
             SourceEmailId = email.EmailMessageId,
             LastUpdatedEmailId = email.EmailMessageId
@@ -963,6 +986,136 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
             $"Created stub order {order.OrderId} for ref '{orderReference}'");
 
         return order;
+    }
+
+    /// <summary>
+    /// Reconciles orphaned ShipmentLines and ReturnLines for an order.
+    /// When a shipment/return email processes before the order confirmation, item-to-line
+    /// matching fails because the stub order has no OrderLines. This method retries the
+    /// matching using the ParsedItemsJson stored on the Shipment/Return entities.
+    /// </summary>
+    private async Task ReconcileOrderAsync(Guid orderId, Guid emailMessageId, CancellationToken ct)
+    {
+        var order = await _db.Orders
+            .IgnoreQueryFilters()
+            .Include(o => o.Lines)
+            .Include(o => o.Shipments).ThenInclude(s => s.Lines)
+            .Include(o => o.Returns).ThenInclude(r => r.Lines)
+            .FirstOrDefaultAsync(o => o.OrderId == orderId, ct);
+
+        if (order is null || order.Lines is null || order.Lines.Count == 0)
+            return;
+
+        var reconciled = false;
+
+        // Reconcile shipments with missing ShipmentLines
+        foreach (var shipment in order.Shipments)
+        {
+            if (shipment.Lines.Count > 0 || string.IsNullOrEmpty(shipment.ParsedItemsJson))
+                continue;
+
+            List<ShipmentItemData>? parsedItems;
+            try
+            {
+                parsedItems = JsonSerializer.Deserialize<List<ShipmentItemData>>(shipment.ParsedItemsJson);
+            }
+            catch
+            {
+                await _log.Warn(emailMessageId, "Reconcile",
+                    $"Failed to deserialize ParsedItemsJson for shipment {shipment.ShipmentId}");
+                continue;
+            }
+
+            if (parsedItems is null || parsedItems.Count == 0) continue;
+
+            var linkedCount = 0;
+            foreach (var item in parsedItems)
+            {
+                var orderLine = order.Lines.FirstOrDefault(l =>
+                    l.ProductName.Contains(item.ProductName, StringComparison.OrdinalIgnoreCase));
+                if (orderLine is not null)
+                {
+                    var alreadyLinked = shipment.Lines.Any(sl => sl.OrderLineId == orderLine.OrderLineId);
+                    if (!alreadyLinked)
+                    {
+                        _db.ShipmentLines.Add(new ShipmentLine
+                        {
+                            ShipmentLineId = Guid.NewGuid(),
+                            ShipmentId = shipment.ShipmentId,
+                            OrderLineId = orderLine.OrderLineId,
+                            Quantity = item.Quantity
+                        });
+                        linkedCount++;
+                    }
+                }
+            }
+
+            if (linkedCount > 0)
+            {
+                reconciled = true;
+                await _log.Info(emailMessageId, "Reconcile",
+                    $"Linked {linkedCount} ShipmentLine(s) for shipment {shipment.ShipmentId}");
+            }
+        }
+
+        // Reconcile returns with missing ReturnLines
+        foreach (var returnEntity in order.Returns)
+        {
+            if (returnEntity.Lines.Count > 0 || string.IsNullOrEmpty(returnEntity.ParsedItemsJson))
+                continue;
+
+            List<ReturnItemData>? parsedItems;
+            try
+            {
+                parsedItems = JsonSerializer.Deserialize<List<ReturnItemData>>(returnEntity.ParsedItemsJson);
+            }
+            catch
+            {
+                await _log.Warn(emailMessageId, "Reconcile",
+                    $"Failed to deserialize ParsedItemsJson for return {returnEntity.ReturnId}");
+                continue;
+            }
+
+            if (parsedItems is null || parsedItems.Count == 0) continue;
+
+            var linkedCount = 0;
+            foreach (var item in parsedItems)
+            {
+                var orderLine = order.Lines.FirstOrDefault(l =>
+                    l.ProductName.Contains(item.ProductName, StringComparison.OrdinalIgnoreCase));
+                if (orderLine is not null)
+                {
+                    var alreadyLinked = returnEntity.Lines.Any(rl => rl.OrderLineId == orderLine.OrderLineId);
+                    if (!alreadyLinked)
+                    {
+                        returnEntity.Lines.Add(new ReturnLine
+                        {
+                            ReturnLineId = Guid.NewGuid(),
+                            ReturnId = returnEntity.ReturnId,
+                            OrderLineId = orderLine.OrderLineId,
+                            Quantity = item.Quantity,
+                            ReturnReason = item.ReturnReason
+                        });
+                        orderLine.Status = OrderLineStatus.ReturnInitiated;
+                        linkedCount++;
+                    }
+                }
+            }
+
+            if (linkedCount > 0)
+            {
+                reconciled = true;
+                await _log.Info(emailMessageId, "Reconcile",
+                    $"Linked {linkedCount} ReturnLine(s) for return {returnEntity.ReturnId}");
+            }
+        }
+
+        if (reconciled)
+        {
+            await _db.SaveChangesAsync(ct);
+            await _log.Success(emailMessageId, "Reconcile",
+                $"Reconciliation completed for order {orderId}");
+        }
     }
 
     private async Task CreateTimelineEvent(
