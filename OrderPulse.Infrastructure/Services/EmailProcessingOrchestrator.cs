@@ -134,8 +134,7 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
             }
 
             await _log.Info(emailMessageId, "BodyRetrieved",
-                $"Source: {bodySource}, Length: {body.Length} chars",
-                body.Length > 1000 ? body[..1000] : body);
+                $"Source: {bodySource}, RawLength: {body.Length} chars");
 
             // Pre-process forwarded emails: strip forwarding headers and extract the original body
             if (ForwardedEmailHelper.IsForwardedSubject(email.Subject) || body.Length > 20_000)
@@ -419,6 +418,12 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
             "Order placed", $"Order #{parsed.ExternalOrderNumber} confirmed", ct);
 
         await _db.SaveChangesAsync(ct);
+
+        if (lines.Count == 0)
+        {
+            await _log.Warn(email.EmailMessageId, "OrderCreated",
+                $"Order {order.OrderId} created with 0 line items — possible parsing issue");
+        }
 
         await _log.Info(email.EmailMessageId, "OrderCreated",
             $"Created order {order.OrderId} — #{order.ExternalOrderNumber} with {order.Lines.Count} lines",

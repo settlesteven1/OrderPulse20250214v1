@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using OrderPulse.Domain.Enums;
 using OrderPulse.Domain.Interfaces;
 using OrderPulse.Infrastructure.Data;
+using OrderPulse.Infrastructure.Services;
 
 namespace OrderPulse.Functions.EmailProcessing;
 
@@ -17,15 +18,18 @@ public class EmailClassifierFunction
     private readonly ILogger<EmailClassifierFunction> _logger;
     private readonly OrderPulseDbContext _db;
     private readonly IEmailClassifier _classifier;
+    private readonly EmailBlobStorageService _blobStorage;
 
     public EmailClassifierFunction(
         ILogger<EmailClassifierFunction> logger,
         OrderPulseDbContext db,
-        IEmailClassifier classifier)
+        IEmailClassifier classifier,
+        EmailBlobStorageService blobStorage)
     {
         _logger = logger;
         _db = db;
         _classifier = classifier;
+        _blobStorage = blobStorage;
     }
 
     [Function("EmailClassifierFunction")]
@@ -79,9 +83,21 @@ public class EmailClassifierFunction
                 return null; // Don't forward to parser
             }
 
-            // Step 2: Full classification
-            // TODO: Retrieve full body from Blob Storage using email.BodyBlobUrl
-            var fullBody = email.BodyPreview ?? ""; // Placeholder
+            // Step 2: Full classification — retrieve full body from Blob Storage
+            var fullBody = email.BodyPreview ?? "";
+            if (!string.IsNullOrEmpty(email.BodyBlobUrl))
+            {
+                try
+                {
+                    var blobBody = await _blobStorage.GetEmailBodyAsync(email.BodyBlobUrl, ct);
+                    if (!string.IsNullOrEmpty(blobBody))
+                        fullBody = ForwardedEmailHelper.ExtractOriginalBody(blobBody);
+                }
+                catch (Exception blobEx)
+                {
+                    _logger.LogWarning(blobEx, "Blob fetch failed for classification of {id}, using preview", id);
+                }
+            }
             var result = await _classifier.ClassifyAsync(
                 email.Subject, fullBody, email.FromAddress, ct);
 

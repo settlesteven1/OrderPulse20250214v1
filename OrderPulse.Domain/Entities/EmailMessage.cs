@@ -10,6 +10,10 @@ public class EmailMessage
     public string? InternetMessageId { get; set; }
     public string FromAddress { get; set; } = string.Empty;
     public string? FromDisplayName { get; set; }
+    /// <summary>
+    /// Original sender address extracted from forwarded email preamble or X-Forwarded-From header.
+    /// Used as fallback for retailer matching when FromAddress is the forwarder's personal email.
+    /// </summary>
     public string? OriginalFromAddress { get; set; }
     public string Subject { get; set; } = string.Empty;
     public DateTime ReceivedAt { get; set; }
