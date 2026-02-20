@@ -75,6 +75,13 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
             return;
         }
 
+        // Idempotency: skip if already successfully processed (Service Bus retry after crash)
+        if (email.ProcessingStatus == ProcessingStatus.Parsed)
+        {
+            await _log.Info(emailMessageId, "Start", "Email already processed — skipping (idempotent retry)");
+            return;
+        }
+
         // Set SESSION_CONTEXT for all subsequent DB operations
         await _db.Database.ExecuteSqlRawAsync(
             "EXEC sp_set_session_context @key=N'TenantId', @value={0}",
@@ -306,9 +313,20 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
         OrderData parsed, List<OrderLineData> lines, EmailMessage email,
         Retailer? retailer, CancellationToken ct)
     {
+        // Filter out invalid line items (null/empty product names cause ArgumentNullException on save)
+        lines = lines.Where(l => !string.IsNullOrWhiteSpace(l.ProductName)).ToList();
+
         // Try to find existing order by order number (normalize and bypass RLS)
         var normalized = !string.IsNullOrWhiteSpace(parsed.ExternalOrderNumber)
             ? NormalizeOrderNumber(parsed.ExternalOrderNumber) : null;
+
+        // Validate the order number isn't obviously wrong (e.g. subject line text used as order number)
+        if (normalized != null && IsInvalidOrderNumber(normalized))
+        {
+            await _log.Warn(email.EmailMessageId, "OrderParser",
+                $"Rejecting invalid order number '{normalized}' — looks like subject line text, not an order reference");
+            normalized = null;
+        }
 
         var existingOrder = normalized != null
             ? await _db.Orders
@@ -329,7 +347,7 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
             await CreateTimelineEvent(existingOrder.OrderId, email, "OrderModified",
                 "Order modified", $"Order updated from email: {email.Subject}", ct);
 
-            await _db.SaveChangesAsync(ct);
+            await SaveWithConcurrencyRetryAsync(email.EmailMessageId, ct);
             return existingOrder.OrderId;
         }
 
@@ -351,7 +369,7 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
             existingOrder.LastUpdatedEmailId = email.EmailMessageId;
             var hadLines = existingOrder.Lines?.Count > 0;
             AddNewLineItems(existingOrder, lines);
-            await _db.SaveChangesAsync(ct);
+            await SaveWithConcurrencyRetryAsync(email.EmailMessageId, ct);
 
             // If this enrichment added lines to a stub, retroactively link orphaned shipments/returns
             if (!hadLines && existingOrder.Lines?.Count > 0)
@@ -368,7 +386,9 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
             OrderId = Guid.NewGuid(),
             TenantId = email.TenantId,
             RetailerId = retailer?.RetailerId,
-            ExternalOrderNumber = normalized ?? parsed.ExternalOrderNumber,
+            ExternalOrderNumber = normalized
+                ?? (IsInvalidOrderNumber(parsed.ExternalOrderNumber) ? null : parsed.ExternalOrderNumber)
+                ?? $"UNKNOWN-{email.EmailMessageId:N}",
             ExternalOrderUrl = parsed.ExternalOrderUrl,
             OrderDate = TryParseDate(parsed.OrderDate) ?? email.ReceivedAt,
             Status = OrderStatus.Placed,
@@ -377,7 +397,7 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
             ShippingCost = parsed.ShippingCost,
             DiscountAmount = parsed.DiscountAmount,
             TotalAmount = parsed.TotalAmount,
-            Currency = parsed.Currency,
+            Currency = !string.IsNullOrWhiteSpace(parsed.Currency) ? parsed.Currency : "USD",
             EstimatedDeliveryStart = TryParseDateOnly(parsed.EstimatedDeliveryStart),
             EstimatedDeliveryEnd = TryParseDateOnly(parsed.EstimatedDeliveryEnd),
             ShippingAddress = parsed.ShippingAddress,
@@ -1215,7 +1235,7 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
 
     /// <summary>
     /// Adds line items from parsed data that don't already exist on the order.
-    /// Matches by product name (case-insensitive).
+    /// Matches by product name (case-insensitive). Skips lines with null/empty product names.
     /// </summary>
     private void AddNewLineItems(Order order, List<OrderLineData>? lines)
     {
@@ -1224,6 +1244,9 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
         var nextLineNum = (order.Lines?.Any() == true ? order.Lines.Max(l => l.LineNumber) : 0) + 1;
         foreach (var line in lines)
         {
+            // Skip lines with missing product names (would cause ArgumentNullException on save)
+            if (string.IsNullOrWhiteSpace(line.ProductName)) continue;
+
             // Skip if a line with this product name already exists
             var exists = order.Lines?.Any(l =>
                 l.ProductName.Contains(line.ProductName, StringComparison.OrdinalIgnoreCase)) ?? false;
@@ -1395,7 +1418,10 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
         if (parsed.TaxAmount.HasValue) order.TaxAmount = parsed.TaxAmount;
         if (parsed.ShippingCost.HasValue) order.ShippingCost = parsed.ShippingCost;
         if (parsed.DiscountAmount.HasValue) order.DiscountAmount = parsed.DiscountAmount;
+        if (!string.IsNullOrWhiteSpace(parsed.Currency)) order.Currency = parsed.Currency;
         if (parsed.ShippingAddress is not null) order.ShippingAddress = parsed.ShippingAddress;
+        if (!string.IsNullOrWhiteSpace(parsed.PaymentMethodSummary))
+            order.PaymentMethodSummary = parsed.PaymentMethodSummary;
         if (parsed.EstimatedDeliveryStart is not null)
             order.EstimatedDeliveryStart = TryParseDateOnly(parsed.EstimatedDeliveryStart);
         if (parsed.EstimatedDeliveryEnd is not null)
@@ -1474,5 +1500,53 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
         if (DateOnly.TryParse(dateStr, out var result)) return result;
         if (DateTime.TryParse(dateStr, out var dt)) return DateOnly.FromDateTime(dt);
         return null;
+    }
+
+    /// <summary>
+    /// Saves changes with retry on DbUpdateConcurrencyException.
+    /// When a Service Bus retry processes the same email concurrently, two function instances
+    /// can load the same stub order. The second save fails because the row was already updated.
+    /// This method reloads the entity and retries once.
+    /// </summary>
+    private async Task SaveWithConcurrencyRetryAsync(Guid emailMessageId, CancellationToken ct)
+    {
+        try
+        {
+            await _db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateConcurrencyException ex)
+        {
+            await _log.Warn(emailMessageId, "ConcurrencyRetry",
+                $"Concurrency conflict — reloading and retrying: {ex.Message}");
+
+            // Reload all conflicting entries from the database
+            foreach (var entry in ex.Entries)
+            {
+                await entry.ReloadAsync(ct);
+            }
+
+            // Retry the save with refreshed data
+            await _db.SaveChangesAsync(ct);
+        }
+    }
+
+    /// <summary>
+    /// Detects obviously invalid order numbers — typically subject line text that the AI parser
+    /// mistakenly returned as an order number (e.g. "ZURNMED® Climate-Line Air... and 1 more item").
+    /// </summary>
+    private static bool IsInvalidOrderNumber(string? orderNumber)
+    {
+        if (string.IsNullOrWhiteSpace(orderNumber)) return true;
+
+        // Real order numbers are short alphanumeric strings (typically < 40 chars)
+        if (orderNumber.Length > 60) return true;
+
+        // Subject line text contains ellipsis, "and X more", or quoted product names
+        if (orderNumber.Contains("...") || orderNumber.Contains("…")) return true;
+        if (orderNumber.Contains(" and ", StringComparison.OrdinalIgnoreCase)
+            && orderNumber.Contains(" more", StringComparison.OrdinalIgnoreCase)) return true;
+        if (orderNumber.Contains('"') || orderNumber.Contains('\u201C') || orderNumber.Contains('\u201D')) return true;
+
+        return false;
     }
 }
