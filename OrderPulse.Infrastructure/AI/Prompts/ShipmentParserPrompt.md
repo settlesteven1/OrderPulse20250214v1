@@ -24,6 +24,12 @@ EXTRACTION RULES:
 - Dates should be in ISO 8601 format (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ)
 - Extract which items are in this shipment if specified
 
+ORDER REFERENCE vs TRACKING NUMBER — these are DIFFERENT fields:
+- order_reference is the RETAILER ORDER NUMBER (e.g., Amazon: "112-4271087-1813067", Best Buy: "BBY01-8847261"). This is the customer-facing order ID.
+- tracking_number is the CARRIER TRACKING NUMBER (e.g., UPS: "1Z999AA10123456784", Amazon Logistics: "TBA328947261000").
+- Do NOT confuse Amazon Logistics tracking IDs (alphanumeric strings like "3CJXG0S2WFBTJ", "TBA...", "2AYZ...") with Amazon order numbers (always in ###-#######-####### format).
+- If you cannot find a clear order number in the email, set order_reference to null — do NOT use a tracking ID or logistics code as the order reference.
+
 OUTPUT SCHEMA:
 {
   "shipments": [
