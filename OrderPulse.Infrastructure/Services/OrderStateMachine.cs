@@ -48,7 +48,11 @@ public class OrderStateMachine
     private static OrderStatus ComputeStatus(Order order)
     {
         var totalLines = order.Lines.Sum(l => l.Quantity);
-        if (totalLines == 0) return order.Status; // No lines, keep current
+
+        // For stub orders with no lines, compute status directly from child entities.
+        // This handles the case where shipment/delivery emails arrive before the order confirmation.
+        if (totalLines == 0)
+            return ComputeStatusFromChildEntities(order);
 
         // Check cancellations
         var cancelledQty = order.Lines.Where(l => l.Status == OrderLineStatus.Cancelled).Sum(l => l.Quantity);
@@ -122,6 +126,49 @@ public class OrderStateMachine
 
         if (cancelledQty > 0)
             return OrderStatus.PartiallyCancelled;
+
+        return OrderStatus.Placed;
+    }
+
+    /// <summary>
+    /// Computes status for stub orders that have no line items yet.
+    /// Uses shipment/delivery/return entities directly instead of line-level tracking.
+    /// This ensures stub orders display the correct status in the UI while waiting
+    /// for the order confirmation email to arrive with line details.
+    /// </summary>
+    private static OrderStatus ComputeStatusFromChildEntities(Order order)
+    {
+        // Check returns
+        var hasOpenReturns = order.Returns.Any(r =>
+            r.Status is ReturnStatus.Initiated or ReturnStatus.LabelIssued or ReturnStatus.Shipped);
+        var hasReceivedReturns = order.Returns.Any(r => r.Status == ReturnStatus.Received);
+
+        if (hasReceivedReturns) return OrderStatus.ReturnReceived;
+        if (hasOpenReturns) return OrderStatus.ReturnInProgress;
+
+        // Check refunds
+        if (order.Refunds.Any()) return OrderStatus.Refunded;
+
+        // Check deliveries
+        var hasDelivered = order.Shipments.Any(s =>
+            s.Delivery?.Status == DeliveryStatus.Delivered);
+        var hasDeliveryException = order.Shipments.Any(s =>
+            s.Delivery?.Status is DeliveryStatus.DeliveryException or DeliveryStatus.Lost);
+
+        if (hasDeliveryException) return OrderStatus.DeliveryException;
+        if (hasDelivered) return OrderStatus.Delivered;
+
+        // Check shipment progress
+        var hasOutForDelivery = order.Shipments.Any(s => s.Status == ShipmentStatus.OutForDelivery);
+        if (hasOutForDelivery) return OrderStatus.OutForDelivery;
+
+        var hasDeliveredShipment = order.Shipments.Any(s => s.Status == ShipmentStatus.Delivered);
+        if (hasDeliveredShipment) return OrderStatus.Delivered;
+
+        var hasInTransit = order.Shipments.Any(s => s.Status == ShipmentStatus.InTransit);
+        if (hasInTransit) return OrderStatus.InTransit;
+
+        if (order.Shipments.Any()) return OrderStatus.Shipped;
 
         return OrderStatus.Placed;
     }
