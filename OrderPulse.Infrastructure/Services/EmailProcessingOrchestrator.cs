@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using OrderPulse.Domain.Entities;
@@ -74,6 +75,13 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
             return;
         }
 
+        // Idempotency: skip if already successfully processed (Service Bus retry after crash)
+        if (email.ProcessingStatus == ProcessingStatus.Parsed)
+        {
+            await _log.Info(emailMessageId, "Start", "Email already processed — skipping (idempotent retry)");
+            return;
+        }
+
         // Set SESSION_CONTEXT for all subsequent DB operations
         await _db.Database.ExecuteSqlRawAsync(
             "EXEC sp_set_session_context @key=N'TenantId', @value={0}",
@@ -96,10 +104,13 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
             await _db.SaveChangesAsync(ct);
 
             // Match retailer
-            var retailer = await _retailerMatcher.MatchAsync(email.FromAddress, ct);
+            var retailer = await _retailerMatcher.MatchAsync(email.FromAddress, email.OriginalFromAddress, ct);
             var retailerContext = retailer?.Name;
-            await _log.Info(emailMessageId, "RetailerMatch",
-                retailer != null ? $"Matched retailer: {retailer.Name}" : $"No retailer match for {email.FromAddress}");
+            var matchSource = retailer != null
+                ? $"Matched retailer: {retailer.Name}"
+                : $"No retailer match for {email.FromAddress}" +
+                  (email.OriginalFromAddress != null ? $" (original: {email.OriginalFromAddress})" : "");
+            await _log.Info(emailMessageId, "RetailerMatch", matchSource);
 
             // Retrieve full body from Blob Storage, fall back to preview
             var body = email.BodyPreview ?? "";
@@ -130,8 +141,21 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
             }
 
             await _log.Info(emailMessageId, "BodyRetrieved",
-                $"Source: {bodySource}, Length: {body.Length} chars",
-                body.Length > 1000 ? body[..1000] : body);
+                $"Source: {bodySource}, RawLength: {body.Length} chars");
+
+            // Pre-process forwarded emails: strip forwarding headers and extract the original body
+            if (ForwardedEmailHelper.IsForwardedSubject(email.Subject) || body.Length > 20_000)
+            {
+                var originalLength = body.Length;
+                body = ForwardedEmailHelper.ExtractOriginalBody(body);
+                if (body.Length < originalLength)
+                {
+                    var preview = body.Length > 500 ? body[..500] : body;
+                    await _log.Info(emailMessageId, "ForwardStrip",
+                        $"Stripped: {originalLength} → {body.Length} chars",
+                        $"First 500 chars: {preview}");
+                }
+            }
 
             // Pre-process: strip forwarding headers, convert HTML to plain text, truncate.
             // This reduces Amazon HTML emails from 60-80K → 5-15K chars of clean text,
@@ -152,6 +176,9 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
                 foreach (var oid in orderIds)
                 {
                     await _log.Success(emailMessageId, "OrderCreated", $"Order ID: {oid}");
+                    // Reconcile orphaned shipment/return lines before recalculating status,
+                    // since the state machine uses ShipmentLines to compute order status
+                    await ReconcileOrderAsync(oid, emailMessageId, ct);
                     await _stateMachine.RecalculateStatusAsync(oid, ct);
                 }
             }
@@ -234,6 +261,16 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
         await _log.Info(email.EmailMessageId, "OrderParser", $"Calling order parser with {body.Length} chars body");
         var result = await _orderParser.ParseAsync(email.Subject, body, email.FromAddress, retailerContext, ct);
 
+        // Detailed diagnostic logging for parser response
+        var dataNull = result.Data is null;
+        var orderNull = result.Data?.Order is null;
+        var linesCount = result.Data?.Lines?.Count ?? 0;
+        var ordersCount = result.Data?.Orders?.Count ?? 0;
+        var orderNum = result.Data?.Order?.ExternalOrderNumber ?? "(null)";
+        await _log.Info(email.EmailMessageId, "OrderParser",
+            $"AI response: Data={!dataNull}, Order={!orderNull}, Lines={linesCount}, Orders={ordersCount}, OrderNum={orderNum}, Confidence={result.Confidence}",
+            $"ErrorMessage: {result.ErrorMessage ?? "none"}, NeedsReview: {result.NeedsReview}");
+
         if (result.Data is null)
         {
             await _log.Error(email.EmailMessageId, "OrderParser", "Order parser returned null data — flagging for review");
@@ -245,8 +282,8 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
         var allOrders = result.Data.GetAllOrders();
 
         await _log.Info(email.EmailMessageId, "OrderParser",
-            $"Parser returned: Confidence={result.Confidence}, NeedsReview={result.NeedsReview}, OrderCount={allOrders.Count}",
-            $"ErrorMessage: {result.ErrorMessage ?? "none"}, OrderNumbers: {string.Join(", ", allOrders.Select(o => o.Order.ExternalOrderNumber ?? "null"))}");
+            $"Normalized: {allOrders.Count} order(s), Lines per order: [{string.Join(", ", allOrders.Select(o => o.Lines?.Count ?? 0))}]",
+            $"OrderNumbers: {string.Join(", ", allOrders.Select(o => o.Order.ExternalOrderNumber ?? "null"))}");
 
         if (allOrders.Count == 0)
         {
@@ -262,7 +299,7 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
             return new List<Guid>();
         }
 
-        var retailer = await _retailerMatcher.MatchAsync(email.FromAddress, ct);
+        var retailer = await _retailerMatcher.MatchAsync(email.FromAddress, email.OriginalFromAddress, ct);
         var createdIds = new List<Guid>();
 
         foreach (var entry in allOrders)
@@ -287,9 +324,20 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
         OrderData parsed, List<OrderLineData> lines, EmailMessage email,
         Retailer? retailer, CancellationToken ct)
     {
+        // Filter out invalid line items (null/empty product names cause ArgumentNullException on save)
+        lines = lines.Where(l => !string.IsNullOrWhiteSpace(l.ProductName)).ToList();
+
         // Try to find existing order by order number (normalize and bypass RLS)
         var normalized = !string.IsNullOrWhiteSpace(parsed.ExternalOrderNumber)
             ? NormalizeOrderNumber(parsed.ExternalOrderNumber) : null;
+
+        // Validate the order number isn't obviously wrong (e.g. subject line text used as order number)
+        if (normalized != null && IsInvalidOrderNumber(normalized))
+        {
+            await _log.Warn(email.EmailMessageId, "OrderParser",
+                $"Rejecting invalid order number '{normalized}' — looks like subject line text, not an order reference");
+            normalized = null;
+        }
 
         var existingOrder = normalized != null
             ? await _db.Orders
@@ -310,16 +358,36 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
             await CreateTimelineEvent(existingOrder.OrderId, email, "OrderModified",
                 "Order modified", $"Order updated from email: {email.Subject}", ct);
 
-            await _db.SaveChangesAsync(ct);
+            await SaveWithConcurrencyRetryAsync(email.EmailMessageId, ct);
             return existingOrder.OrderId;
         }
 
         if (existingOrder is not null)
         {
+            // If this was a stub order created by a shipment/return before the order
+            // confirmation arrived, enrich it with the full order data
+            if (existingOrder.IsInferred)
+            {
+                UpdateOrderFromParsed(existingOrder, parsed);
+                existingOrder.IsInferred = false;
+                existingOrder.OrderDate = TryParseDate(parsed.OrderDate) ?? existingOrder.OrderDate;
+                existingOrder.ExternalOrderUrl = parsed.ExternalOrderUrl ?? existingOrder.ExternalOrderUrl;
+                await _log.Info(email.EmailMessageId, "StubEnriched",
+                    $"Enriched stub order {existingOrder.OrderId} — #{existingOrder.ExternalOrderNumber}");
+            }
+
             // Link email and add any new line items not already on the order
             existingOrder.LastUpdatedEmailId = email.EmailMessageId;
+            var hadLines = existingOrder.Lines?.Count > 0;
             AddNewLineItems(existingOrder, lines);
-            await _db.SaveChangesAsync(ct);
+            await SaveWithConcurrencyRetryAsync(email.EmailMessageId, ct);
+
+            // If this enrichment added lines to a stub, retroactively link orphaned shipments/returns
+            if (!hadLines && existingOrder.Lines?.Count > 0)
+            {
+                await LinkOrphanedRecordsToLinesAsync(existingOrder, email, ct);
+            }
+
             return existingOrder.OrderId;
         }
 
@@ -329,7 +397,9 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
             OrderId = Guid.NewGuid(),
             TenantId = email.TenantId,
             RetailerId = retailer?.RetailerId,
-            ExternalOrderNumber = normalized ?? parsed.ExternalOrderNumber,
+            ExternalOrderNumber = normalized
+                ?? (IsInvalidOrderNumber(parsed.ExternalOrderNumber) ? null : parsed.ExternalOrderNumber)
+                ?? $"UNKNOWN-{email.EmailMessageId:N}",
             ExternalOrderUrl = parsed.ExternalOrderUrl,
             OrderDate = TryParseDate(parsed.OrderDate) ?? email.ReceivedAt,
             Status = OrderStatus.Placed,
@@ -338,7 +408,7 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
             ShippingCost = parsed.ShippingCost,
             DiscountAmount = parsed.DiscountAmount,
             TotalAmount = parsed.TotalAmount,
-            Currency = parsed.Currency,
+            Currency = !string.IsNullOrWhiteSpace(parsed.Currency) ? parsed.Currency : "USD",
             EstimatedDeliveryStart = TryParseDateOnly(parsed.EstimatedDeliveryStart),
             EstimatedDeliveryEnd = TryParseDateOnly(parsed.EstimatedDeliveryEnd),
             ShippingAddress = parsed.ShippingAddress,
@@ -348,6 +418,12 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
         };
 
         // Add line items
+        if (lines.Count == 0)
+        {
+            await _log.Warn(email.EmailMessageId, "OrderLines",
+                $"Parser returned 0 line items for order #{parsed.ExternalOrderNumber} — order will have no lines");
+        }
+
         int lineNum = 1;
         foreach (var line in lines)
         {
@@ -374,8 +450,15 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
 
         await _db.SaveChangesAsync(ct);
 
+        if (lines.Count == 0)
+        {
+            await _log.Warn(email.EmailMessageId, "OrderCreated",
+                $"Order {order.OrderId} created with 0 line items — possible parsing issue");
+        }
+
         await _log.Info(email.EmailMessageId, "OrderCreated",
-            $"Created order {order.OrderId} — #{order.ExternalOrderNumber} with {lines.Count} lines");
+            $"Created order {order.OrderId} — #{order.ExternalOrderNumber} with {order.Lines.Count} lines",
+            lines.Count > 0 ? $"Products: {string.Join("; ", lines.Select(l => $"{l.ProductName} x{l.Quantity}"))}" : "NO LINE ITEMS");
 
         return order.OrderId;
     }
@@ -385,9 +468,19 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
     private async Task<Guid?> ProcessShipmentAsync(
         EmailMessage email, string body, string? retailerContext, CancellationToken ct)
     {
+        await _log.Info(email.EmailMessageId, "ShipmentParser", $"Calling shipment parser with {body.Length} chars body");
         var result = await _shipmentParser.ParseAsync(email.Subject, body, email.FromAddress, retailerContext, ct);
+
+        var shipmentCount = result.Data?.Shipments?.Count ?? 0;
+        var itemCounts = result.Data?.Shipments?.Select(s => s.Items?.Count ?? 0).ToList() ?? new List<int>();
+        var orderRefs = result.Data?.Shipments?.Select(s => s.OrderReference ?? "(null)").ToList() ?? new List<string>();
+        await _log.Info(email.EmailMessageId, "ShipmentParser",
+            $"AI response: Shipments={shipmentCount}, ItemsPerShipment=[{string.Join(", ", itemCounts)}], Confidence={result.Confidence}",
+            $"OrderRefs: [{string.Join(", ", orderRefs)}], ErrorMessage: {result.ErrorMessage ?? "none"}");
+
         if (result.Data?.Shipments is null || result.Data.Shipments.Count == 0)
         {
+            await _log.Error(email.EmailMessageId, "ShipmentParser", "Shipment parser returned no data — flagging for review");
             await FlagForReview(email, "Shipment parser returned no data", ct);
             return null;
         }
@@ -445,7 +538,10 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
                     ShipDate = TryParseDate(shipmentData.ShipDate),
                     EstimatedDelivery = TryParseDateOnly(shipmentData.EstimatedDelivery),
                     Status = shipmentStatus,
-                    SourceEmailId = email.EmailMessageId
+                    SourceEmailId = email.EmailMessageId,
+                    ParsedItemsJson = shipmentData.Items.Count > 0
+                        ? JsonSerializer.Serialize(shipmentData.Items)
+                        : null
                 };
                 _db.Shipments.Add(shipment);
 
@@ -463,6 +559,8 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
                             OrderLineId = orderLine.OrderLineId,
                             Quantity = item.Quantity
                         });
+                        orderLine.Status = OrderLineStatus.Shipped;
+                        orderLine.UpdatedAt = DateTime.UtcNow;
                     }
                 }
 
@@ -488,8 +586,10 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
         var result = await _deliveryParser.ParseAsync(email.Subject, body, email.FromAddress, retailerContext, ct);
 
         await _log.Info(email.EmailMessageId, "DeliveryParser",
-            $"Parser returned: Confidence={result.Confidence}, NeedsReview={result.NeedsReview}, HasData={result.Data != null}, HasDelivery={result.Data?.Delivery != null}",
-            $"ErrorMessage: {result.ErrorMessage ?? "none"}, TrackingNumber: {result.Data?.Delivery?.TrackingNumber ?? "null"}, OrderRef: {result.Data?.Delivery?.OrderReference ?? "null"}");
+            $"AI response: HasData={result.Data != null}, HasDelivery={result.Data?.Delivery != null}, Confidence={result.Confidence}",
+            $"OrderRef: {result.Data?.Delivery?.OrderReference ?? "(null)"}, Tracking: {result.Data?.Delivery?.TrackingNumber ?? "(null)"}, " +
+            $"Status: {result.Data?.Delivery?.Status ?? "(null)"}, Location: {result.Data?.Delivery?.DeliveryLocation ?? "(null)"}, " +
+            $"ErrorMessage: {result.ErrorMessage ?? "none"}");
 
         if (result.Data?.Delivery is null)
         {
@@ -581,6 +681,23 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
             ? ShipmentStatus.Delivered
             : ShipmentStatus.Exception;
         shipment.UpdatedAt = DateTime.UtcNow;
+
+        // Update order line statuses for all lines linked to this shipment
+        if (deliveryStatus == DeliveryStatus.Delivered)
+        {
+            var shipmentLines = await _db.ShipmentLines
+                .Where(sl => sl.ShipmentId == shipment.ShipmentId)
+                .Include(sl => sl.OrderLine)
+                .ToListAsync(ct);
+            foreach (var sl in shipmentLines)
+            {
+                if (sl.OrderLine is not null)
+                {
+                    sl.OrderLine.Status = OrderLineStatus.Delivered;
+                    sl.OrderLine.UpdatedAt = DateTime.UtcNow;
+                }
+            }
+        }
 
         var eventType = deliveryStatus == DeliveryStatus.Delivered ? "Delivered" : "DeliveryIssue";
         var summary = deliveryStatus == DeliveryStatus.Delivered
@@ -683,7 +800,10 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
                 DropOffLocation = parsed.DropOffLocation,
                 DropOffAddress = parsed.DropOffAddress,
                 SourceEmailId = email.EmailMessageId,
-                LastUpdatedEmailId = email.EmailMessageId
+                LastUpdatedEmailId = email.EmailMessageId,
+                ParsedItemsJson = result.Data.Items.Count > 0
+                    ? JsonSerializer.Serialize(result.Data.Items)
+                    : null
             };
 
             if (parsed.QrCodeInEmail)
@@ -943,7 +1063,7 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
         if (existing is not null) return existing;
 
         // Create a stub order
-        var retailer = await _retailerMatcher.MatchAsync(email.FromAddress, ct);
+        var retailer = await _retailerMatcher.MatchAsync(email.FromAddress, email.OriginalFromAddress, ct);
         var normalized = !string.IsNullOrWhiteSpace(orderReference) ? NormalizeOrderNumber(orderReference) : null;
 
         var order = new Order
@@ -954,6 +1074,7 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
             ExternalOrderNumber = normalized ?? $"UNKNOWN-{email.EmailMessageId:N}",
             OrderDate = email.ReceivedAt,
             Status = OrderStatus.Placed,
+            IsInferred = true,
             Currency = "USD",
             SourceEmailId = email.EmailMessageId,
             LastUpdatedEmailId = email.EmailMessageId
@@ -966,6 +1087,136 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
             $"Created stub order {order.OrderId} for ref '{orderReference}'");
 
         return order;
+    }
+
+    /// <summary>
+    /// Reconciles orphaned ShipmentLines and ReturnLines for an order.
+    /// When a shipment/return email processes before the order confirmation, item-to-line
+    /// matching fails because the stub order has no OrderLines. This method retries the
+    /// matching using the ParsedItemsJson stored on the Shipment/Return entities.
+    /// </summary>
+    private async Task ReconcileOrderAsync(Guid orderId, Guid emailMessageId, CancellationToken ct)
+    {
+        var order = await _db.Orders
+            .IgnoreQueryFilters()
+            .Include(o => o.Lines)
+            .Include(o => o.Shipments).ThenInclude(s => s.Lines)
+            .Include(o => o.Returns).ThenInclude(r => r.Lines)
+            .FirstOrDefaultAsync(o => o.OrderId == orderId, ct);
+
+        if (order is null || order.Lines is null || order.Lines.Count == 0)
+            return;
+
+        var reconciled = false;
+
+        // Reconcile shipments with missing ShipmentLines
+        foreach (var shipment in order.Shipments)
+        {
+            if (shipment.Lines.Count > 0 || string.IsNullOrEmpty(shipment.ParsedItemsJson))
+                continue;
+
+            List<ShipmentItemData>? parsedItems;
+            try
+            {
+                parsedItems = JsonSerializer.Deserialize<List<ShipmentItemData>>(shipment.ParsedItemsJson);
+            }
+            catch
+            {
+                await _log.Warn(emailMessageId, "Reconcile",
+                    $"Failed to deserialize ParsedItemsJson for shipment {shipment.ShipmentId}");
+                continue;
+            }
+
+            if (parsedItems is null || parsedItems.Count == 0) continue;
+
+            var linkedCount = 0;
+            foreach (var item in parsedItems)
+            {
+                var orderLine = order.Lines.FirstOrDefault(l =>
+                    l.ProductName.Contains(item.ProductName, StringComparison.OrdinalIgnoreCase));
+                if (orderLine is not null)
+                {
+                    var alreadyLinked = shipment.Lines.Any(sl => sl.OrderLineId == orderLine.OrderLineId);
+                    if (!alreadyLinked)
+                    {
+                        _db.ShipmentLines.Add(new ShipmentLine
+                        {
+                            ShipmentLineId = Guid.NewGuid(),
+                            ShipmentId = shipment.ShipmentId,
+                            OrderLineId = orderLine.OrderLineId,
+                            Quantity = item.Quantity
+                        });
+                        linkedCount++;
+                    }
+                }
+            }
+
+            if (linkedCount > 0)
+            {
+                reconciled = true;
+                await _log.Info(emailMessageId, "Reconcile",
+                    $"Linked {linkedCount} ShipmentLine(s) for shipment {shipment.ShipmentId}");
+            }
+        }
+
+        // Reconcile returns with missing ReturnLines
+        foreach (var returnEntity in order.Returns)
+        {
+            if (returnEntity.Lines.Count > 0 || string.IsNullOrEmpty(returnEntity.ParsedItemsJson))
+                continue;
+
+            List<ReturnItemData>? parsedItems;
+            try
+            {
+                parsedItems = JsonSerializer.Deserialize<List<ReturnItemData>>(returnEntity.ParsedItemsJson);
+            }
+            catch
+            {
+                await _log.Warn(emailMessageId, "Reconcile",
+                    $"Failed to deserialize ParsedItemsJson for return {returnEntity.ReturnId}");
+                continue;
+            }
+
+            if (parsedItems is null || parsedItems.Count == 0) continue;
+
+            var linkedCount = 0;
+            foreach (var item in parsedItems)
+            {
+                var orderLine = order.Lines.FirstOrDefault(l =>
+                    l.ProductName.Contains(item.ProductName, StringComparison.OrdinalIgnoreCase));
+                if (orderLine is not null)
+                {
+                    var alreadyLinked = returnEntity.Lines.Any(rl => rl.OrderLineId == orderLine.OrderLineId);
+                    if (!alreadyLinked)
+                    {
+                        returnEntity.Lines.Add(new ReturnLine
+                        {
+                            ReturnLineId = Guid.NewGuid(),
+                            ReturnId = returnEntity.ReturnId,
+                            OrderLineId = orderLine.OrderLineId,
+                            Quantity = item.Quantity,
+                            ReturnReason = item.ReturnReason
+                        });
+                        orderLine.Status = OrderLineStatus.ReturnInitiated;
+                        linkedCount++;
+                    }
+                }
+            }
+
+            if (linkedCount > 0)
+            {
+                reconciled = true;
+                await _log.Info(emailMessageId, "Reconcile",
+                    $"Linked {linkedCount} ReturnLine(s) for return {returnEntity.ReturnId}");
+            }
+        }
+
+        if (reconciled)
+        {
+            await _db.SaveChangesAsync(ct);
+            await _log.Success(emailMessageId, "Reconcile",
+                $"Reconciliation completed for order {orderId}");
+        }
     }
 
     private async Task CreateTimelineEvent(
@@ -995,7 +1246,7 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
 
     /// <summary>
     /// Adds line items from parsed data that don't already exist on the order.
-    /// Matches by product name (case-insensitive).
+    /// Matches by product name (case-insensitive). Skips lines with null/empty product names.
     /// </summary>
     private void AddNewLineItems(Order order, List<OrderLineData>? lines)
     {
@@ -1004,6 +1255,9 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
         var nextLineNum = (order.Lines?.Any() == true ? order.Lines.Max(l => l.LineNumber) : 0) + 1;
         foreach (var line in lines)
         {
+            // Skip lines with missing product names (would cause ArgumentNullException on save)
+            if (string.IsNullOrWhiteSpace(line.ProductName)) continue;
+
             // Skip if a line with this product name already exists
             var exists = order.Lines?.Any(l =>
                 l.ProductName.Contains(line.ProductName, StringComparison.OrdinalIgnoreCase)) ?? false;
@@ -1027,6 +1281,147 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
         }
     }
 
+    /// <summary>
+    /// After a stub order is enriched with line items, retroactively links any existing
+    /// Shipment or Return records that were created before the order had lines.
+    /// Re-parses the source emails to recover item data for matching.
+    /// </summary>
+    private async Task LinkOrphanedRecordsToLinesAsync(Order order, EmailMessage triggerEmail, CancellationToken ct)
+    {
+        var orderId = order.OrderId;
+        var tenantId = order.TenantId;
+
+        // Find shipments on this order with zero ShipmentLine records
+        var orphanedShipments = await _db.Shipments
+            .IgnoreQueryFilters()
+            .Include(s => s.Lines)
+            .Where(s => s.OrderId == orderId && s.TenantId == tenantId && s.Lines.Count == 0)
+            .ToListAsync(ct);
+
+        // Find returns on this order with zero ReturnLine records
+        var orphanedReturns = await _db.Returns
+            .IgnoreQueryFilters()
+            .Include(r => r.Lines)
+            .Where(r => r.OrderId == orderId && r.TenantId == tenantId && r.Lines.Count == 0)
+            .ToListAsync(ct);
+
+        if (orphanedShipments.Count == 0 && orphanedReturns.Count == 0)
+            return;
+
+        await _log.Info(triggerEmail.EmailMessageId, "RetroactiveLink",
+            $"Found {orphanedShipments.Count} orphaned shipment(s) and {orphanedReturns.Count} orphaned return(s) for order {orderId}");
+
+        var retailer = await _retailerMatcher.MatchAsync(triggerEmail.FromAddress, ct);
+        var retailerContext = retailer?.Name;
+        var linkedCount = 0;
+
+        // Retroactively link orphaned shipments
+        foreach (var shipment in orphanedShipments)
+        {
+            var sourceEmail = await _db.EmailMessages
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(e => e.EmailMessageId == shipment.SourceEmailId, ct);
+
+            if (sourceEmail is null) continue;
+
+            var body = await FetchEmailBodyAsync(sourceEmail, ct);
+            if (string.IsNullOrEmpty(body)) continue;
+
+            var result = await _shipmentParser.ParseAsync(sourceEmail.Subject, body, sourceEmail.FromAddress, retailerContext, ct);
+            if (result.Data?.Shipments is null) continue;
+
+            // Match items from all shipments in the parsed result that correspond to this shipment
+            // (match by tracking number if available, otherwise use all items)
+            var matchingShipmentData = result.Data.Shipments
+                .FirstOrDefault(s => !string.IsNullOrEmpty(shipment.TrackingNumber)
+                    && s.TrackingNumber == shipment.TrackingNumber)
+                ?? result.Data.Shipments.FirstOrDefault();
+
+            if (matchingShipmentData is null) continue;
+
+            foreach (var item in matchingShipmentData.Items)
+            {
+                var orderLine = order.Lines?.FirstOrDefault(l =>
+                    l.ProductName.Contains(item.ProductName, StringComparison.OrdinalIgnoreCase));
+                if (orderLine is not null)
+                {
+                    _db.ShipmentLines.Add(new ShipmentLine
+                    {
+                        ShipmentLineId = Guid.NewGuid(),
+                        ShipmentId = shipment.ShipmentId,
+                        OrderLineId = orderLine.OrderLineId,
+                        Quantity = item.Quantity
+                    });
+                    linkedCount++;
+                }
+            }
+        }
+
+        // Retroactively link orphaned returns
+        foreach (var returnEntity in orphanedReturns)
+        {
+            var sourceEmail = await _db.EmailMessages
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(e => e.EmailMessageId == returnEntity.SourceEmailId, ct);
+
+            if (sourceEmail is null) continue;
+
+            var body = await FetchEmailBodyAsync(sourceEmail, ct);
+            if (string.IsNullOrEmpty(body)) continue;
+
+            var result = await _returnParser.ParseAsync(sourceEmail.Subject, body, sourceEmail.FromAddress, retailerContext, ct);
+            if (result.Data?.Items is null) continue;
+
+            foreach (var item in result.Data.Items)
+            {
+                var orderLine = order.Lines?.FirstOrDefault(l =>
+                    l.ProductName.Contains(item.ProductName, StringComparison.OrdinalIgnoreCase));
+                if (orderLine is not null)
+                {
+                    returnEntity.Lines.Add(new ReturnLine
+                    {
+                        ReturnLineId = Guid.NewGuid(),
+                        ReturnId = returnEntity.ReturnId,
+                        OrderLineId = orderLine.OrderLineId,
+                        Quantity = item.Quantity,
+                        ReturnReason = item.ReturnReason
+                    });
+                    orderLine.Status = OrderLineStatus.ReturnInitiated;
+                    linkedCount++;
+                }
+            }
+        }
+
+        if (linkedCount > 0)
+        {
+            await _db.SaveChangesAsync(ct);
+            await _log.Info(triggerEmail.EmailMessageId, "RetroactiveLink",
+                $"Linked {linkedCount} line(s) to orphaned shipments/returns for order {orderId}");
+        }
+    }
+
+    /// <summary>
+    /// Fetches the full email body from blob storage, falling back to the body preview.
+    /// </summary>
+    private async Task<string?> FetchEmailBodyAsync(EmailMessage email, CancellationToken ct)
+    {
+        if (!string.IsNullOrEmpty(email.BodyBlobUrl))
+        {
+            try
+            {
+                var body = await _blobStorage.GetEmailBodyAsync(email.BodyBlobUrl, ct);
+                if (!string.IsNullOrEmpty(body))
+                    return body;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to fetch blob for email {id}, falling back to preview", email.EmailMessageId);
+            }
+        }
+
+        return email.BodyPreview;
+    }
+
     private void UpdateOrderFromParsed(Order order, OrderData parsed)
     {
         if (parsed.TotalAmount.HasValue) order.TotalAmount = parsed.TotalAmount;
@@ -1034,7 +1429,10 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
         if (parsed.TaxAmount.HasValue) order.TaxAmount = parsed.TaxAmount;
         if (parsed.ShippingCost.HasValue) order.ShippingCost = parsed.ShippingCost;
         if (parsed.DiscountAmount.HasValue) order.DiscountAmount = parsed.DiscountAmount;
+        if (!string.IsNullOrWhiteSpace(parsed.Currency)) order.Currency = parsed.Currency;
         if (parsed.ShippingAddress is not null) order.ShippingAddress = parsed.ShippingAddress;
+        if (!string.IsNullOrWhiteSpace(parsed.PaymentMethodSummary))
+            order.PaymentMethodSummary = parsed.PaymentMethodSummary;
         if (parsed.EstimatedDeliveryStart is not null)
             order.EstimatedDeliveryStart = TryParseDateOnly(parsed.EstimatedDeliveryStart);
         if (parsed.EstimatedDeliveryEnd is not null)
@@ -1113,5 +1511,53 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
         if (DateOnly.TryParse(dateStr, out var result)) return result;
         if (DateTime.TryParse(dateStr, out var dt)) return DateOnly.FromDateTime(dt);
         return null;
+    }
+
+    /// <summary>
+    /// Saves changes with retry on DbUpdateConcurrencyException.
+    /// When a Service Bus retry processes the same email concurrently, two function instances
+    /// can load the same stub order. The second save fails because the row was already updated.
+    /// This method reloads the entity and retries once.
+    /// </summary>
+    private async Task SaveWithConcurrencyRetryAsync(Guid emailMessageId, CancellationToken ct)
+    {
+        try
+        {
+            await _db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateConcurrencyException ex)
+        {
+            await _log.Warn(emailMessageId, "ConcurrencyRetry",
+                $"Concurrency conflict — reloading and retrying: {ex.Message}");
+
+            // Reload all conflicting entries from the database
+            foreach (var entry in ex.Entries)
+            {
+                await entry.ReloadAsync(ct);
+            }
+
+            // Retry the save with refreshed data
+            await _db.SaveChangesAsync(ct);
+        }
+    }
+
+    /// <summary>
+    /// Detects obviously invalid order numbers — typically subject line text that the AI parser
+    /// mistakenly returned as an order number (e.g. "ZURNMED® Climate-Line Air... and 1 more item").
+    /// </summary>
+    private static bool IsInvalidOrderNumber(string? orderNumber)
+    {
+        if (string.IsNullOrWhiteSpace(orderNumber)) return true;
+
+        // Real order numbers are short alphanumeric strings (typically < 40 chars)
+        if (orderNumber.Length > 60) return true;
+
+        // Subject line text contains ellipsis, "and X more", or quoted product names
+        if (orderNumber.Contains("...") || orderNumber.Contains("…")) return true;
+        if (orderNumber.Contains(" and ", StringComparison.OrdinalIgnoreCase)
+            && orderNumber.Contains(" more", StringComparison.OrdinalIgnoreCase)) return true;
+        if (orderNumber.Contains('"') || orderNumber.Contains('\u201C') || orderNumber.Contains('\u201D')) return true;
+
+        return false;
     }
 }

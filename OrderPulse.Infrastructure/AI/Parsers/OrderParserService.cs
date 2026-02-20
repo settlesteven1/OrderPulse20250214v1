@@ -30,7 +30,7 @@ public class OrderParserService : IEmailParser<OrderParserResult>
             var response = await _ai.ParserCompleteAsync(_systemPrompt.Value, userPrompt, jsonMode: true, ct);
             var result = _ai.DeserializeResponse<OrderParserResult>(response);
 
-            if (result?.Order is null)
+            if (result is null || (result.Order is null && (result.Orders is null || result.Orders.Count == 0)))
             {
                 _logger.LogWarning("Failed to parse order from email: {subject}", subject);
                 return new ParseResult<OrderParserResult>(null, 0m, true, "Failed to parse AI response");

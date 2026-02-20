@@ -60,13 +60,11 @@
 
 @code {
     [Inject] private NavigationManager Navigation { get; set; } = default!;
-    [Inject] private SignOutSessionStateManager SignOutManager { get; set; } = default!;
 
     private int _reviewCount = 0;
 
-    private async Task Logout()
+    private void Logout()
     {
-        await SignOutManager.SetSignOutState();
         Navigation.NavigateToLogout("authentication/logout");
     }
 }
