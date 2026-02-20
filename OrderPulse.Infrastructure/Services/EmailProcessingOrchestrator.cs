@@ -133,6 +133,17 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
                 $"Source: {bodySource}, Length: {body.Length} chars",
                 body.Length > 1000 ? body[..1000] : body);
 
+            // Pre-process: strip forwarding headers, convert HTML to plain text, truncate.
+            // This reduces Amazon HTML emails from 60-80K → 5-15K chars of clean text,
+            // preventing delivery/order data from being truncated away.
+            var rawLength = body.Length;
+            body = ForwardedEmailHelper.ExtractOriginalBody(body);
+            if (body.Length != rawLength)
+            {
+                await _log.Info(emailMessageId, "ForwardStrip",
+                    $"Stripped: {rawLength} -> {body.Length} chars");
+            }
+
             // Route to the appropriate parser
             var orderIds = await RouteAndProcessAsync(email, body, retailerContext, ct);
 
