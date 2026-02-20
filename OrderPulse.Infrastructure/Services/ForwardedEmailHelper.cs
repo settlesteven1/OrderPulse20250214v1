@@ -3,99 +3,109 @@ using System.Text.RegularExpressions;
 namespace OrderPulse.Infrastructure.Services;
 
 /// <summary>
-/// Strips forwarding headers and preamble from forwarded email bodies
-/// to help AI parsers focus on the original email content.
+/// Strips forwarding headers, HTML markup, and email boilerplate from email bodies
+/// so AI parsers receive clean, concise text with the actual content they need.
+///
+/// Amazon HTML emails are typically 60-80K chars of raw HTML. This helper converts
+/// them to ~5-15K chars of plain text, keeping delivery data, order references,
+/// tracking numbers, and product names that would otherwise be truncated.
 /// </summary>
 public static partial class ForwardedEmailHelper
 {
     /// <summary>
-    /// Maximum body length to send to AI parsers. Bodies exceeding this
-    /// are truncated after HTML stripping and forwarding-header removal.
-    /// Increased from 20K to 30K to accommodate product line-item data
-    /// that appears deep in Amazon's HTML structure.
+    /// Maximum body length to send to AI parsers after all cleaning.
+    /// After HTML-to-text conversion, most emails fit well under this limit.
     /// </summary>
     private const int MaxBodyLength = 30_000;
 
     // ── Forwarding header patterns ──
 
-    // Gmail: "---------- Forwarded message ---------"
     [GeneratedRegex(@"-{5,}\s*Forwarded message\s*-{5,}", RegexOptions.IgnoreCase)]
     private static partial Regex GmailForwardMarker();
 
-    // Outlook: "-----Original Message-----"
     [GeneratedRegex(@"-{5,}\s*Original Message\s*-{5,}", RegexOptions.IgnoreCase)]
     private static partial Regex OutlookForwardMarker();
 
-    // Apple Mail: "Begin forwarded message:"
     [GeneratedRegex(@"Begin forwarded message\s*:", RegexOptions.IgnoreCase)]
     private static partial Regex AppleForwardMarker();
 
-    // Subject line "Fwd:" / "Fw:" prefix (for cleaning subject)
     [GeneratedRegex(@"^\s*(Fwd?|Fw)\s*:\s*", RegexOptions.IgnoreCase)]
     private static partial Regex SubjectFwdPrefix();
 
-    // Forwarding metadata block: From/Date/Subject/To lines that follow a forward marker
     [GeneratedRegex(
         @"(?:From\s*:.*\n)?(?:Date\s*:.*\n)?(?:Subject\s*:.*\n)?(?:To\s*:.*\n)?(?:Cc\s*:.*\n)?",
         RegexOptions.IgnoreCase)]
     private static partial Regex ForwardMetadataBlock();
 
-    // HTML forwarding dividers (Gmail/Outlook style)
-    [GeneratedRegex(
-        @"<div\s+class=""gmail_quote"">.*?(?=<div\s+class=""gmail_quote_attribution"">|$)",
-        RegexOptions.IgnoreCase | RegexOptions.Singleline)]
-    private static partial Regex HtmlGmailQuote();
+    // ── HTML removal patterns ──
 
-    // ── HTML stripping patterns ──
-
-    // <style> blocks (often 5-15KB of CSS in Amazon emails)
     [GeneratedRegex(@"<style[^>]*>[\s\S]*?</style>", RegexOptions.IgnoreCase)]
     private static partial Regex StyleBlocks();
 
-    // <script> blocks
     [GeneratedRegex(@"<script[^>]*>[\s\S]*?</script>", RegexOptions.IgnoreCase)]
     private static partial Regex ScriptBlocks();
 
-    // HTML comments (<!-- ... -->), including conditional comments
     [GeneratedRegex(@"<!--[\s\S]*?-->")]
     private static partial Regex HtmlComments();
 
-    // Tracking pixels: <img> tags with width/height of 0 or 1
     [GeneratedRegex(
         @"<img\s[^>]*(?:width\s*=\s*[""']?[01]|height\s*=\s*[""']?[01])[^>]*/?\s*>",
         RegexOptions.IgnoreCase)]
     private static partial Regex TrackingPixels();
 
-    // Runs of whitespace (spaces, tabs, newlines) — collapse to single space
+    [GeneratedRegex(@"<br\s*/?\s*>|</?p\s*>|</?div\s*>|</?tr\s*>|</?li\s*>", RegexOptions.IgnoreCase)]
+    private static partial Regex BlockLevelTags();
+
+    [GeneratedRegex(@"<[^>]+>")]
+    private static partial Regex AllHtmlTags();
+
+    [GeneratedRegex(@"&nbsp;", RegexOptions.IgnoreCase)]
+    private static partial Regex HtmlNbsp();
+
+    [GeneratedRegex(@"&amp;", RegexOptions.IgnoreCase)]
+    private static partial Regex HtmlAmp();
+
+    [GeneratedRegex(@"&lt;", RegexOptions.IgnoreCase)]
+    private static partial Regex HtmlLt();
+
+    [GeneratedRegex(@"&gt;", RegexOptions.IgnoreCase)]
+    private static partial Regex HtmlGt();
+
+    [GeneratedRegex(@"&quot;", RegexOptions.IgnoreCase)]
+    private static partial Regex HtmlQuot();
+
+    [GeneratedRegex(@"&#\d+;")]
+    private static partial Regex HtmlNumericEntities();
+
+    [GeneratedRegex(@"&\w+;")]
+    private static partial Regex HtmlNamedEntities();
+
     [GeneratedRegex(@"[ \t]{2,}")]
     private static partial Regex ExcessiveSpaces();
 
-    // Collapse 3+ consecutive newlines to 2
     [GeneratedRegex(@"(\r?\n){3,}")]
     private static partial Regex ExcessiveNewlines();
 
-    /// <summary>
-    /// Determines whether the subject line indicates a forwarded email.
-    /// </summary>
     public static bool IsForwardedSubject(string? subject)
     {
         if (string.IsNullOrWhiteSpace(subject)) return false;
         return SubjectFwdPrefix().IsMatch(subject);
     }
 
-    /// <summary>
-    /// Strips "Fwd:" / "Fw:" prefix from a subject line.
-    /// </summary>
     public static string CleanSubject(string subject)
     {
         return SubjectFwdPrefix().Replace(subject, "").Trim();
     }
 
     /// <summary>
-    /// Pre-processes an email body to extract the original forwarded content,
-    /// stripping forwarding headers, preamble, and HTML bloat (CSS, scripts,
-    /// comments, tracking pixels). This preserves the actual visible content
-    /// (product names, prices, order details) that AI parsers need.
+    /// Pre-processes an email body for AI parsing:
+    /// 1. Strips forwarding headers/preamble (Gmail, Outlook, Apple Mail)
+    /// 2. Converts HTML to plain text (removes tags, decodes entities)
+    /// 3. Truncates to MaxBodyLength if still too long
+    ///
+    /// This typically reduces Amazon HTML emails from 60-80K to 5-15K chars
+    /// of clean text, ensuring delivery data, tracking numbers, and order
+    /// references are preserved rather than being cut off by truncation.
     /// </summary>
     public static string ExtractOriginalBody(string body)
     {
@@ -104,15 +114,17 @@ public static partial class ForwardedEmailHelper
 
         var cleaned = body;
 
-        // Try each forwarding marker pattern; take the content AFTER the marker + metadata
+        // Strip forwarding preamble — take content AFTER the marker + metadata
         cleaned = TryStripForwardingPreamble(cleaned, GmailForwardMarker())
                ?? TryStripForwardingPreamble(cleaned, OutlookForwardMarker())
                ?? TryStripForwardingPreamble(cleaned, AppleForwardMarker())
                ?? cleaned;
 
-        // Strip HTML bloat before truncating — this preserves the actual content
-        // (product names, prices, etc.) that would otherwise be cut off
-        cleaned = StripHtmlBloat(cleaned);
+        // Convert HTML to plain text — this is the key fix for issue #30.
+        // Previous approach only stripped <style>/<script> but left all HTML tags,
+        // resulting in 30K of HTML chrome with delivery data cut off.
+        // Converting to plain text keeps the actual content within the limit.
+        cleaned = ConvertHtmlToText(cleaned);
 
         // Truncate if still too long
         if (cleaned.Length > MaxBodyLength)
@@ -122,26 +134,37 @@ public static partial class ForwardedEmailHelper
     }
 
     /// <summary>
-    /// Removes non-content HTML elements that consume space without carrying
-    /// useful data for AI parsers: CSS, scripts, comments, tracking pixels,
-    /// and excessive whitespace. Typically reduces Amazon HTML emails from
-    /// 70-90KB to 15-25KB while preserving all visible text.
+    /// Converts HTML email body to plain text by:
+    /// 1. Removing non-content elements (style, script, comments, tracking pixels)
+    /// 2. Converting block-level tags to newlines (preserving visual structure)
+    /// 3. Stripping all remaining HTML tags
+    /// 4. Decoding HTML entities
+    /// 5. Collapsing excessive whitespace
     /// </summary>
-    private static string StripHtmlBloat(string html)
+    private static string ConvertHtmlToText(string html)
     {
         var result = html;
 
-        // Remove <style> blocks — often 5-15KB of CSS in retailer emails
+        // Remove non-content blocks first (these can be huge)
         result = StyleBlocks().Replace(result, "");
-
-        // Remove <script> blocks
         result = ScriptBlocks().Replace(result, "");
-
-        // Remove HTML comments (including conditional IE comments)
         result = HtmlComments().Replace(result, "");
-
-        // Remove tracking pixels (1x1 or 0x0 images)
         result = TrackingPixels().Replace(result, "");
+
+        // Convert block-level tags to newlines so text doesn't run together
+        result = BlockLevelTags().Replace(result, "\n");
+
+        // Strip all remaining HTML tags
+        result = AllHtmlTags().Replace(result, "");
+
+        // Decode common HTML entities
+        result = HtmlNbsp().Replace(result, " ");
+        result = HtmlAmp().Replace(result, "&");
+        result = HtmlLt().Replace(result, "<");
+        result = HtmlGt().Replace(result, ">");
+        result = HtmlQuot().Replace(result, "\"");
+        result = HtmlNumericEntities().Replace(result, "");
+        result = HtmlNamedEntities().Replace(result, "");
 
         // Collapse excessive whitespace
         result = ExcessiveSpaces().Replace(result, " ");
@@ -159,7 +182,7 @@ public static partial class ForwardedEmailHelper
         // Take everything after the forwarding marker
         var afterMarker = body[(match.Index + match.Length)..];
 
-        // Strip the metadata block (From:/Date:/Subject:/To: lines) that typically follows
+        // Strip the metadata block (From:/Date:/Subject:/To: lines) that follows
         afterMarker = ForwardMetadataBlock().Replace(afterMarker, "", 1);
 
         return afterMarker.TrimStart('\r', '\n', ' ');
