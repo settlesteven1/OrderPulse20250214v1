@@ -5,7 +5,8 @@ namespace OrderPulse.Infrastructure.AI.Parsers;
 
 /// <summary>
 /// Parses delivery confirmation and delivery issue emails.
-/// Uses the classifier endpoint (GPT-4o-mini) — delivery emails are typically straightforward.
+/// Uses the parser endpoint (GPT-4o) — delivery emails from forwarded HTML sources
+/// often contain noisy content that requires the full model for reliable extraction.
 /// </summary>
 public class DeliveryParserService : IEmailParser<DeliveryParserResult>
 {
@@ -24,10 +25,12 @@ public class DeliveryParserService : IEmailParser<DeliveryParserResult>
         string subject, string body, string fromAddress, string? retailerContext, CancellationToken ct = default)
     {
         var userPrompt = $"Subject: {subject}\nFrom: {fromAddress}\n\nEmail Body:\n{body}";
+        if (!string.IsNullOrEmpty(retailerContext))
+            userPrompt += $"\n\nKnown retailer context: {retailerContext}";
 
         try
         {
-            var response = await _ai.ClassifierCompleteAsync(_systemPrompt.Value, userPrompt, jsonMode: true, ct);
+            var response = await _ai.ParserCompleteAsync(_systemPrompt.Value, userPrompt, jsonMode: true, ct);
             var result = _ai.DeserializeResponse<DeliveryParserResult>(response);
 
             if (result?.Delivery is null)
