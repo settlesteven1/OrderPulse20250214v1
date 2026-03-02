@@ -3,11 +3,11 @@ using System.Text.RegularExpressions;
 namespace OrderPulse.Infrastructure.Services;
 
 /// <summary>
-/// Strips forwarding headers, HTML markup, and email boilerplate from email bodies
-/// so AI parsers receive clean, concise text with the actual content they need.
+/// Strips forwarding headers, HTML markup, invisible Unicode characters, and email
+/// boilerplate from email bodies so AI parsers receive clean, concise text.
 ///
 /// Amazon HTML emails are typically 60-80K chars of raw HTML. This helper converts
-/// them to ~5-15K chars of plain text, keeping delivery data, order references,
+/// them to ~2-5K chars of plain text, keeping delivery data, order references,
 /// tracking numbers, and product names that would otherwise be truncated.
 /// </summary>
 public static partial class ForwardedEmailHelper
@@ -86,6 +86,24 @@ public static partial class ForwardedEmailHelper
     [GeneratedRegex(@"(\r?\n){3,}")]
     private static partial Regex ExcessiveNewlines();
 
+    // ── Unicode zero-width / invisible character pattern ──
+    // Amazon emails embed these heavily for tracking and anti-scraping.
+    // U+200B  Zero-width space
+    // U+200C  Zero-width non-joiner
+    // U+200D  Zero-width joiner
+    // U+200E  Left-to-right mark
+    // U+200F  Right-to-left mark
+    // U+034F  Combining grapheme joiner
+    // U+00AD  Soft hyphen
+    // U+FEFF  Byte order mark / zero-width no-break space
+    // U+2060  Word joiner
+    // U+2061-U+2064  Invisible math operators
+    // U+202A-U+202E  Bidi control characters (includes RTL/LTR embedding)
+    // U+2066-U+2069  Bidi isolate characters
+    // U+FE00-U+FE0F  Variation selectors
+    [GeneratedRegex(@"[\u200B-\u200F\u034F\u00AD\uFEFF\u2060-\u2064\u202A-\u202E\u2066-\u2069\uFE00-\uFE0F]")]
+    private static partial Regex InvisibleUnicodeChars();
+
     public static bool IsForwardedSubject(string? subject)
     {
         if (string.IsNullOrWhiteSpace(subject)) return false;
@@ -101,11 +119,12 @@ public static partial class ForwardedEmailHelper
     /// Pre-processes an email body for AI parsing:
     /// 1. Strips forwarding headers/preamble (Gmail, Outlook, Apple Mail)
     /// 2. Converts HTML to plain text (removes tags, decodes entities)
-    /// 3. Truncates to MaxBodyLength if still too long
+    /// 3. Strips invisible Unicode characters (zero-width spaces, bidi marks, etc.)
+    /// 4. Truncates to MaxBodyLength if still too long
     ///
-    /// This typically reduces Amazon HTML emails from 60-80K to 5-15K chars
+    /// This typically reduces Amazon HTML emails from 60-80K to 2-5K chars
     /// of clean text, ensuring delivery data, tracking numbers, and order
-    /// references are preserved rather than being cut off by truncation.
+    /// references are preserved rather than being buried in invisible chars.
     /// </summary>
     public static string ExtractOriginalBody(string body)
     {
@@ -120,17 +139,22 @@ public static partial class ForwardedEmailHelper
                ?? TryStripForwardingPreamble(cleaned, AppleForwardMarker())
                ?? cleaned;
 
-        // Convert HTML to plain text — this is the key fix for issue #30.
-        // Previous approach only stripped <style>/<script> but left all HTML tags,
-        // resulting in 30K of HTML chrome with delivery data cut off.
-        // Converting to plain text keeps the actual content within the limit.
+        // Convert HTML to plain text
         cleaned = ConvertHtmlToText(cleaned);
+
+        // Strip invisible Unicode characters (zero-width spaces, bidi marks, etc.)
+        // This is critical for Amazon emails which embed thousands of these characters.
+        cleaned = InvisibleUnicodeChars().Replace(cleaned, "");
+
+        // Collapse whitespace again after Unicode removal (may have left gaps)
+        cleaned = ExcessiveSpaces().Replace(cleaned, " ");
+        cleaned = ExcessiveNewlines().Replace(cleaned, "\n\n");
 
         // Truncate if still too long
         if (cleaned.Length > MaxBodyLength)
             cleaned = cleaned[..MaxBodyLength];
 
-        return cleaned;
+        return cleaned.Trim();
     }
 
     /// <summary>

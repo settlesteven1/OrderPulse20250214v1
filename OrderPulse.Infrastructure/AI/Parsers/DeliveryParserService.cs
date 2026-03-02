@@ -6,7 +6,8 @@ namespace OrderPulse.Infrastructure.AI.Parsers;
 
 /// <summary>
 /// Parses delivery confirmation and delivery issue emails.
-/// Uses the parser endpoint (GPT-4o) for better handling of complex HTML in forwarded emails.
+/// Uses the parser endpoint (GPT-4o) — delivery emails from forwarded HTML sources
+/// often contain noisy content that requires the full model for reliable extraction.
 /// </summary>
 public class DeliveryParserService : IEmailParser<DeliveryParserResult>
 {
@@ -24,12 +25,7 @@ public class DeliveryParserService : IEmailParser<DeliveryParserResult>
     public async Task<ParseResult<DeliveryParserResult>> ParseAsync(
         string subject, string body, string fromAddress, string? retailerContext, CancellationToken ct = default)
     {
-        // Clean forwarding artifacts from the subject
-        var cleanedSubject = ForwardedEmailHelper.IsForwardedSubject(subject)
-            ? ForwardedEmailHelper.CleanSubject(subject)
-            : subject;
-
-        var userPrompt = $"Subject: {cleanedSubject}\nFrom: {fromAddress}\n\nEmail Body:\n{body}";
+        var userPrompt = $"Subject: {subject}\nFrom: {fromAddress}\n\nEmail Body:\n{body}";
         if (!string.IsNullOrEmpty(retailerContext))
             userPrompt += $"\n\nKnown retailer context: {retailerContext}";
 

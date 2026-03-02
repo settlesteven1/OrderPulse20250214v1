@@ -141,31 +141,19 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
             }
 
             await _log.Info(emailMessageId, "BodyRetrieved",
-                $"Source: {bodySource}, RawLength: {body.Length} chars");
+                $"Source: {bodySource}, RawLength: {body.Length} chars",
+                body.Length > 1000 ? body[..1000] : body);
 
-            // Pre-process forwarded emails: strip forwarding headers and extract the original body
-            if (ForwardedEmailHelper.IsForwardedSubject(email.Subject) || body.Length > 20_000)
-            {
-                var originalLength = body.Length;
-                body = ForwardedEmailHelper.ExtractOriginalBody(body);
-                if (body.Length < originalLength)
-                {
-                    var preview = body.Length > 500 ? body[..500] : body;
-                    await _log.Info(emailMessageId, "ForwardStrip",
-                        $"Stripped: {originalLength} → {body.Length} chars",
-                        $"First 500 chars: {preview}");
-                }
-            }
-
-            // Pre-process: strip forwarding headers, convert HTML to plain text, truncate.
-            // This reduces Amazon HTML emails from 60-80K → 5-15K chars of clean text,
-            // preventing delivery/order data from being truncated away.
+            // Pre-process: strip forwarding headers, convert HTML to plain text,
+            // remove invisible Unicode characters, and truncate.
+            // This reduces Amazon HTML emails from 60-80K → 2-5K chars of clean text,
+            // preventing delivery/order data from being buried in HTML noise.
             var rawLength = body.Length;
             body = ForwardedEmailHelper.ExtractOriginalBody(body);
             if (body.Length != rawLength)
             {
                 await _log.Info(emailMessageId, "ForwardStrip",
-                    $"Stripped: {rawLength} -> {body.Length} chars");
+                    $"Stripped: {rawLength} \u2192 {body.Length} chars");
             }
 
             // Route to the appropriate parser
