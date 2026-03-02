@@ -14,6 +14,7 @@ You are a data extraction agent. Given a return-related email, extract structure
 - ReturnRejection: return denied
 
 EXTRACTION RULES:
+- FORWARDED EMAILS: If this email was forwarded, extract data from the ORIGINAL return details. Ignore forwarding preambles and quoted-text markers.
 - Extract the RMA number / return authorization number if provided
 - Extract ALL items being returned with their quantities and per-item return reasons
 - For return labels: note whether it's a printable label, QR code, or both

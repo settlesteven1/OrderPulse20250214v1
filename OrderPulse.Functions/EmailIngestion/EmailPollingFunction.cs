@@ -1,6 +1,8 @@
+using System.Text.RegularExpressions;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Graph.Models;
 using OrderPulse.Infrastructure.Data;
 using OrderPulse.Infrastructure.Services;
 using OrderPulse.Domain.Entities;
@@ -127,6 +129,9 @@ public class EmailPollingFunction
                 var blobUrl = await _blobStorage.StoreEmailBodyAsync(
                     tenant.TenantId, msg.Id, bodyContent, ct);
 
+                // Extract original sender from forwarded email headers/body
+                var originalFrom = ExtractOriginalSender(msg);
+
                 // Create EmailMessage record
                 var email = new EmailMessage
                 {
@@ -136,6 +141,7 @@ public class EmailPollingFunction
                     InternetMessageId = msg.InternetMessageId,
                     FromAddress = msg.From?.EmailAddress?.Address ?? "unknown",
                     FromDisplayName = msg.From?.EmailAddress?.Name,
+                    OriginalFromAddress = originalFrom,
                     Subject = msg.Subject ?? "(no subject)",
                     ReceivedAt = msg.ReceivedDateTime?.UtcDateTime ?? DateTime.UtcNow,
                     BodyBlobUrl = blobUrl,
@@ -143,6 +149,13 @@ public class EmailPollingFunction
                     HasAttachments = msg.HasAttachments ?? false,
                     ProcessingStatus = ProcessingStatus.Pending
                 };
+
+                if (originalFrom is not null)
+                {
+                    _logger.LogInformation(
+                        "Detected forwarded email for {graphId}: original sender {original} (from: {from})",
+                        msg.Id, originalFrom, email.FromAddress);
+                }
 
                 _db.EmailMessages.Add(email);
                 await _db.SaveChangesAsync(ct);
@@ -175,5 +188,104 @@ public class EmailPollingFunction
     {
         if (string.IsNullOrEmpty(preview)) return null;
         return preview.Length <= maxLength ? preview : preview[..maxLength];
+    }
+
+    /// <summary>
+    /// Extracts the original sender email from a forwarded message.
+    /// Checks internet message headers first (X-Forwarded-From, X-Original-From),
+    /// then falls back to parsing common forwarded-message patterns in the body.
+    /// Returns null if the email does not appear to be forwarded.
+    /// </summary>
+    private static string? ExtractOriginalSender(Message msg)
+    {
+        // Strategy 1: Check internet message headers for forwarded-from indicators
+        if (msg.InternetMessageHeaders is { Count: > 0 })
+        {
+            var forwardedHeaders = new[] { "X-Forwarded-From", "X-Original-From", "X-Original-Sender" };
+            foreach (var headerName in forwardedHeaders)
+            {
+                var header = msg.InternetMessageHeaders
+                    .FirstOrDefault(h => string.Equals(h.Name, headerName, StringComparison.OrdinalIgnoreCase));
+                if (header?.Value is not null)
+                {
+                    var extracted = ExtractEmailFromString(header.Value);
+                    if (extracted is not null)
+                        return extracted;
+                }
+            }
+        }
+
+        // Strategy 2: Parse common forwarded message patterns in the body
+        var body = msg.Body?.Content;
+        if (string.IsNullOrEmpty(body))
+            return null;
+
+        return ExtractOriginalSenderFromBody(body);
+    }
+
+    /// <summary>
+    /// Parses common forwarded-email body patterns to find the original sender.
+    /// Handles Gmail, Outlook, and generic forwarding formats.
+    /// </summary>
+    private static string? ExtractOriginalSenderFromBody(string body)
+    {
+        // Pattern 1: Gmail-style "---------- Forwarded message ---------\nFrom: Name <email@domain.com>"
+        // Pattern 2: Outlook-style "From: Name <email@domain.com>" after forwarding separator
+        // Pattern 3: Generic "From: email@domain.com"
+
+        // Match "From:" lines that follow a forwarding indicator
+        var forwardIndicators = new[]
+        {
+            @"[-]{3,}\s*Forwarded\s+message\s*[-]{3,}",   // Gmail
+            @"Begin\s+forwarded\s+message:",                // Apple Mail
+            @"_{3,}\s*\r?\n\s*From:",                       // Outlook desktop
+            @"Original\s+Message",                          // Generic
+        };
+
+        foreach (var indicator in forwardIndicators)
+        {
+            var indicatorMatch = Regex.Match(body, indicator, RegexOptions.IgnoreCase);
+            if (!indicatorMatch.Success)
+                continue;
+
+            // Look for "From:" within 500 chars after the indicator
+            var searchStart = indicatorMatch.Index + indicatorMatch.Length;
+            var searchRegion = body.Substring(searchStart, Math.Min(500, body.Length - searchStart));
+
+            // Match "From:" followed by an email address (with or without display name)
+            var fromMatch = Regex.Match(searchRegion,
+                @"From:\s*(?:.*?<([^>]+@[^>]+)>|([A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}))",
+                RegexOptions.IgnoreCase);
+
+            if (fromMatch.Success)
+            {
+                return fromMatch.Groups[1].Success ? fromMatch.Groups[1].Value.Trim()
+                     : fromMatch.Groups[2].Value.Trim();
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Extracts an email address from a string that may contain a display name.
+    /// E.g., "Amazon.com &lt;auto-confirm@amazon.com&gt;" → "auto-confirm@amazon.com"
+    /// </summary>
+    private static string? ExtractEmailFromString(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+
+        // Try angle bracket format: "Name <email>"
+        var angleMatch = Regex.Match(value, @"<([^>]+@[^>]+)>");
+        if (angleMatch.Success)
+            return angleMatch.Groups[1].Value.Trim();
+
+        // Try bare email
+        var bareMatch = Regex.Match(value, @"([A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,})");
+        if (bareMatch.Success)
+            return bareMatch.Groups[1].Value.Trim();
+
+        return null;
     }
 }

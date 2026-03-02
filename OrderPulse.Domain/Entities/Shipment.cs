@@ -17,6 +17,11 @@ public class Shipment
     public string? LastStatusUpdate { get; set; }
     public DateTime? LastStatusDate { get; set; }
     public Guid? SourceEmailId { get; set; }
+    /// <summary>
+    /// JSON-serialized parsed shipment item data from the original email.
+    /// Used for reconciliation when shipment processes before order confirmation.
+    /// </summary>
+    public string? ParsedItemsJson { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 

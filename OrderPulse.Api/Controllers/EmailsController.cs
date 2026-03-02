@@ -17,6 +17,7 @@ public class EmailsController : ControllerBase
 {
     private readonly IEmailMessageRepository _emailRepo;
     private readonly IEmailProcessingOrchestrator _orchestrator;
+    private readonly IEmailClassifier _classifier;
     private readonly OrderPulseDbContext _db;
     private readonly EmailBlobStorageService _blobStorage;
     private readonly IEmailParser<OrderParserResult> _orderParser;
@@ -24,12 +25,14 @@ public class EmailsController : ControllerBase
     public EmailsController(
         IEmailMessageRepository emailRepo,
         IEmailProcessingOrchestrator orchestrator,
+        IEmailClassifier classifier,
         OrderPulseDbContext db,
         EmailBlobStorageService blobStorage,
         IEmailParser<OrderParserResult> orderParser)
     {
         _emailRepo = emailRepo;
         _orchestrator = orchestrator;
+        _classifier = classifier;
         _db = db;
         _blobStorage = blobStorage;
         _orderParser = orderParser;
@@ -79,13 +82,141 @@ public class EmailsController : ControllerBase
     }
 
     /// <summary>
-    /// Reprocess a failed or review-queued email.
+    /// Reprocess a failed or review-queued email (uses existing classification).
     /// </summary>
     [HttpPost("{id:guid}/reprocess")]
     public async Task<ActionResult> Reprocess(Guid id, CancellationToken ct)
     {
         await _orchestrator.ProcessEmailAsync(id, ct);
         return Ok();
+    }
+
+    /// <summary>
+    /// Reclassify and reprocess an email. Re-runs the AI classifier with the latest prompt,
+    /// then reprocesses through the parsing pipeline. Use this when classification prompts
+    /// have been updated and emails need to be re-evaluated.
+    /// </summary>
+    [HttpPost("{id:guid}/reclassify")]
+    public async Task<ActionResult> Reclassify(Guid id, CancellationToken ct)
+    {
+        var email = await _db.EmailMessages
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(e => e.EmailMessageId == id, ct);
+        if (email is null)
+            return NotFound(new { error = "Email not found" });
+
+        // Set tenant context
+        await _db.Database.ExecuteSqlRawAsync(
+            "EXEC sp_set_session_context @key=N'TenantId', @value={0}",
+            email.TenantId.ToString());
+
+        // Retrieve full body for classification
+        var fullBody = email.BodyPreview ?? "";
+        if (!string.IsNullOrEmpty(email.BodyBlobUrl))
+        {
+            try
+            {
+                var blobBody = await _blobStorage.GetEmailBodyAsync(email.BodyBlobUrl, ct);
+                if (!string.IsNullOrEmpty(blobBody))
+                    fullBody = ForwardedEmailHelper.ExtractOriginalBody(blobBody);
+            }
+            catch { /* fall through to preview */ }
+        }
+
+        // Re-run the classifier
+        var oldType = email.ClassificationType;
+        var result = await _classifier.ClassifyAsync(email.Subject, fullBody, email.FromAddress, ct);
+        email.ClassificationType = result.Type;
+        email.ClassificationConfidence = result.Confidence;
+        email.ProcessingStatus = ProcessingStatus.Classified;
+        email.ProcessedAt = null;
+        email.ErrorDetails = null;
+        await _db.SaveChangesAsync(ct);
+
+        // Reprocess with the new classification
+        await _orchestrator.ProcessEmailAsync(id, ct);
+
+        return Ok(new
+        {
+            emailId = id,
+            oldClassification = oldType?.ToString(),
+            newClassification = result.Type.ToString(),
+            newConfidence = result.Confidence
+        });
+    }
+
+    /// <summary>
+    /// Reclassify and reprocess ALL emails. Re-runs the classifier on every email
+    /// then reprocesses through the parsing pipeline.
+    /// </summary>
+    [HttpPost("reclassify-all")]
+    public async Task<ActionResult> ReclassifyAll(CancellationToken ct)
+    {
+        var emails = await _db.EmailMessages
+            .IgnoreQueryFilters()
+            .Where(e => e.ClassificationType != null)
+            .OrderBy(e => e.ReceivedAt)
+            .ToListAsync(ct);
+
+        if (emails.Count == 0)
+            return Ok(new { message = "No emails to reclassify", count = 0 });
+
+        var results = new List<object>();
+        foreach (var email in emails)
+        {
+            // Set tenant context
+            await _db.Database.ExecuteSqlRawAsync(
+                "EXEC sp_set_session_context @key=N'TenantId', @value={0}",
+                email.TenantId.ToString());
+
+            var fullBody = email.BodyPreview ?? "";
+            if (!string.IsNullOrEmpty(email.BodyBlobUrl))
+            {
+                try
+                {
+                    var blobBody = await _blobStorage.GetEmailBodyAsync(email.BodyBlobUrl, ct);
+                    if (!string.IsNullOrEmpty(blobBody))
+                        fullBody = ForwardedEmailHelper.ExtractOriginalBody(blobBody);
+                }
+                catch { /* fall through to preview */ }
+            }
+
+            var oldType = email.ClassificationType;
+            var classResult = await _classifier.ClassifyAsync(email.Subject, fullBody, email.FromAddress, ct);
+            email.ClassificationType = classResult.Type;
+            email.ClassificationConfidence = classResult.Confidence;
+            email.ProcessingStatus = ProcessingStatus.Classified;
+            email.ProcessedAt = null;
+            email.ErrorDetails = null;
+            await _db.SaveChangesAsync(ct);
+
+            try
+            {
+                await _orchestrator.ProcessEmailAsync(email.EmailMessageId, ct);
+                results.Add(new
+                {
+                    emailId = email.EmailMessageId,
+                    subject = email.Subject,
+                    oldClassification = oldType?.ToString(),
+                    newClassification = classResult.Type.ToString(),
+                    status = "success"
+                });
+            }
+            catch (Exception ex)
+            {
+                results.Add(new
+                {
+                    emailId = email.EmailMessageId,
+                    subject = email.Subject,
+                    oldClassification = oldType?.ToString(),
+                    newClassification = classResult.Type.ToString(),
+                    status = "error",
+                    error = ex.Message
+                });
+            }
+        }
+
+        return Ok(new { count = results.Count, results });
     }
 
     /// <summary>

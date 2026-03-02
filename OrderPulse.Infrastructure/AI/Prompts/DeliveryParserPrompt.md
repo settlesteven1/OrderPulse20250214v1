@@ -21,8 +21,30 @@ EXTRACTION RULES:
 - Delivery location: front door, back door, mailroom, locker, garage, porch, signed for by [name], etc.
 - For delivery issues: identify the issue type from: Missing, Damaged, WrongItem, NotReceived, Stolen, Other
 - Extract any tracking number for matching to existing shipments
+- Extract the order reference number — for Amazon, look for patterns like ###-#######-####### anywhere in the body
 - If a delivery photo URL is referenced, extract it
 - Dates should be in ISO 8601 format
+- If the email subject says "Delivered" and you can identify any delivery details, return a delivery record even with partial data
+
+FALLBACK RULES:
+- If you can tell this is a delivery email (subject says "Delivered", sender is a delivery service or retailer) but cannot extract specific details, still return a delivery record with status "Delivered" and confidence 0.6
+- Never return HasData=False for an email that is clearly about a delivery
+
+FORWARDED EMAILS:
+- Emails may have been forwarded by the user. The body may contain forwarding headers such as "---------- Forwarded message ---------", "-----Original Message-----", or "Begin forwarded message:".
+- If present, ignore the forwarding wrapper and extract data from the ORIGINAL email content.
+- The From address in the user prompt may be the forwarder (e.g. a personal Gmail), not the retailer. Look inside the body for the original sender.
+- Look for Amazon delivery patterns: "Your package was delivered", order references like "#112-XXXXXXX-XXXXXXX", UPS/USPS/FedEx tracking numbers.
+
+HTML EMAIL BODIES:
+- The email body may contain raw HTML with tags, CSS classes, and embedded styles. Extract data from the TEXT CONTENT within the HTML, ignoring tags and attributes.
+- Amazon delivery emails are heavily HTML-formatted. Look for delivery details inside table cells, divs, and spans — not just plain text.
+- Even if the HTML appears garbled or truncated, extract whatever delivery data is visible: delivery date, location, order number, tracking number.
+- If the body is mostly HTML and you can identify any delivery-related content, extract it with moderate confidence rather than returning null.
+- The subject line ("Delivered: ...") is itself a strong signal — if the subject says "Delivered" but the body is unparseable HTML, still return a delivery record with status "Delivered" and set confidence to 0.6.
+
+RETAILER CONTEXT:
+- If a "Known retailer context" line is provided, use it as a hint for which retailer patterns to look for.
 
 FALLBACK RULES:
 - If the subject says "Delivered" and the body mentions delivery, this IS a delivery email — always extract what you can.
@@ -167,5 +189,38 @@ A replacement or refund will be issued within 3 business days if the package is 
   },
   "confidence": 0.94,
   "notes": "Customer-reported non-receipt. Amazon has opened an investigation with UPS."
+}
+```
+
+### Example 3 — Forwarded Delivery Email (plain text from HTML)
+**Input:**
+```
+Subject: Fwd: Delivered: Your Amazon.com order
+From: user@gmail.com
+
+Your package was delivered
+Delivered
+Wednesday, February 12
+Your package was delivered. It was handed directly to a resident.
+Track your package
+112-3948571-2837465
+```
+
+**Output:**
+```json
+{
+  "delivery": {
+    "order_reference": "#112-3948571-2837465",
+    "tracking_number": null,
+    "delivery_date": "2026-02-12T00:00:00Z",
+    "delivery_location": "Handed to resident",
+    "status": "Delivered",
+    "issue_type": null,
+    "issue_description": null,
+    "signed_by": null,
+    "photo_url": null
+  },
+  "confidence": 0.85,
+  "notes": "Forwarded Amazon delivery email. Order number extracted from body text. No tracking number found."
 }
 ```

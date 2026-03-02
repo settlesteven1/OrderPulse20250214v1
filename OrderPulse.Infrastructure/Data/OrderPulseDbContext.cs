@@ -66,6 +66,7 @@ public class OrderPulseDbContext : DbContext
             entity.HasIndex(e => new { e.TenantId, e.ProcessingStatus });
             entity.Property(e => e.ClassificationType).HasConversion<string>().HasMaxLength(50);
             entity.Property(e => e.ProcessingStatus).HasConversion<string>().HasMaxLength(30);
+            entity.Property(e => e.OriginalFromAddress).HasMaxLength(320);
             entity.HasOne(e => e.Tenant).WithMany(t => t.EmailMessages).HasForeignKey(e => e.TenantId);
         });
 

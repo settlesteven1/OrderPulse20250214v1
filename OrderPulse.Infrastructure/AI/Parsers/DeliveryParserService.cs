@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using OrderPulse.Domain.Interfaces;
+using OrderPulse.Infrastructure.Services;
 
 namespace OrderPulse.Infrastructure.AI.Parsers;
 

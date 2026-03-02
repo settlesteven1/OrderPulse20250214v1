@@ -10,6 +10,7 @@
 You are a data extraction agent. Given an order cancellation email, extract the structured cancellation data.
 
 EXTRACTION RULES:
+- FORWARDED EMAILS: If this email was forwarded, extract data from the ORIGINAL cancellation details. Ignore forwarding preambles and quoted-text markers.
 - Determine if it's a full or partial cancellation
 - Extract which items were cancelled with quantities
 - Extract any refund information included in the cancellation
