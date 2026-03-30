@@ -1,7 +1,9 @@
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using OrderPulse.Domain.Enums;
 using OrderPulse.Domain.Interfaces;
+using OrderPulse.Infrastructure.AI;
 using OrderPulse.Infrastructure.Data;
 
 namespace OrderPulse.Functions.EmailProcessing;
@@ -62,6 +64,14 @@ public class EmailParsingFunction
         {
             await _orchestrator.ProcessEmailAsync(id, ct);
             _logger.LogInformation("Successfully parsed email {id}", id);
+        }
+        catch (ContentFilterException cfEx)
+        {
+            // Content filter is a permanent failure — flag for manual review, don't dead-letter
+            email.ProcessingStatus = ProcessingStatus.ManualReview;
+            email.ErrorDetails = $"Content filter: {cfEx.Message}";
+            await _db.SaveChangesAsync(ct);
+            _logger.LogWarning(cfEx, "Email {id} flagged for review — content filter triggered during parsing", id);
         }
         catch (Exception ex)
         {

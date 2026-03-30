@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using OrderPulse.Domain.Enums;
 using OrderPulse.Domain.Interfaces;
+using OrderPulse.Infrastructure.AI;
 using OrderPulse.Infrastructure.Data;
 using OrderPulse.Infrastructure.Services;
 
@@ -118,6 +119,15 @@ public class EmailClassifierFunction
 
             // Forward to parsing queue
             return id.ToString();
+        }
+        catch (ContentFilterException cfEx)
+        {
+            // Content filter is a permanent failure — don't retry, flag for manual review
+            email.ProcessingStatus = ProcessingStatus.ManualReview;
+            email.ErrorDetails = $"Content filter: {cfEx.Message}";
+            await _db.SaveChangesAsync(ct);
+            _logger.LogWarning(cfEx, "Email {id} flagged for review — content filter triggered", id);
+            return null; // Don't dead-letter, don't forward to parser
         }
         catch (Exception ex)
         {
