@@ -432,4 +432,93 @@ public class EmailsController : ControllerBase
             await _db.Database.CloseConnectionAsync();
         }
     }
+
+    /// <summary>
+    /// Debug endpoint: remove duplicate shipments created by reprocessing.
+    /// Keeps the earliest shipment per tracking number (or per SourceEmailId if no tracking),
+    /// preserving its delivery and shipment lines. Removes duplicates and their orphaned data.
+    /// </summary>
+    [AllowAnonymous]
+    [HttpPost("debug/cleanup-duplicate-shipments")]
+    public async Task<ActionResult> CleanupDuplicateShipments(CancellationToken ct)
+    {
+        await _db.Database.OpenConnectionAsync(ct);
+        try
+        {
+            var tenantId = Guid.Parse("215F9D63-05C2-4C4C-8548-1CD950DC430A");
+            await _db.Database.ExecuteSqlRawAsync(
+                "EXEC sp_set_session_context @key=N'TenantId', @value={0}",
+                tenantId.ToString());
+
+            var allShipments = await _db.Shipments
+                .IgnoreQueryFilters()
+                .Where(s => s.TenantId == tenantId)
+                .Include(s => s.Delivery)
+                .Include(s => s.Lines)
+                .ToListAsync(ct);
+
+            // Group by OrderId + TrackingNumber (or SourceEmailId if no tracking)
+            var groups = allShipments
+                .GroupBy(s => new { s.OrderId, Key = s.TrackingNumber ?? s.SourceEmailId.ToString() })
+                .Where(g => g.Count() > 1)
+                .ToList();
+
+            var removed = new List<object>();
+            foreach (var group in groups)
+            {
+                // Keep the one with a delivery, or the one with the most shipment lines, or the earliest
+                var ordered = group
+                    .OrderByDescending(s => s.Delivery != null ? 1 : 0)
+                    .ThenByDescending(s => s.Lines?.Count ?? 0)
+                    .ThenBy(s => s.CreatedAt)
+                    .ToList();
+
+                var keep = ordered.First();
+                var duplicates = ordered.Skip(1).ToList();
+
+                foreach (var dup in duplicates)
+                {
+                    // Move any shipment lines from dup to keep (if keep doesn't have them)
+                    if (dup.Lines != null)
+                    {
+                        foreach (var line in dup.Lines.ToList())
+                        {
+                            var alreadyHas = keep.Lines?.Any(l => l.OrderLineId == line.OrderLineId) ?? false;
+                            if (!alreadyHas)
+                            {
+                                line.ShipmentId = keep.ShipmentId;
+                            }
+                            else
+                            {
+                                _db.ShipmentLines.Remove(line);
+                            }
+                        }
+                    }
+
+                    // Move delivery if keep doesn't have one
+                    if (dup.Delivery != null && keep.Delivery == null)
+                    {
+                        dup.Delivery.ShipmentId = keep.ShipmentId;
+                        keep.Delivery = dup.Delivery;
+                        dup.Delivery = null;
+                    }
+                    else if (dup.Delivery != null)
+                    {
+                        _db.Deliveries.Remove(dup.Delivery);
+                    }
+
+                    removed.Add(new { dup.ShipmentId, dup.OrderId, dup.TrackingNumber, dup.SourceEmailId });
+                    _db.Shipments.Remove(dup);
+                }
+            }
+
+            await _db.SaveChangesAsync(ct);
+
+            return Ok(new { duplicateGroupsFound = groups.Count, shipmentsRemoved = removed.Count, removed });
+        }
+        finally
+        {
+            await _db.Database.CloseConnectionAsync();
+        }
+    }
 }
