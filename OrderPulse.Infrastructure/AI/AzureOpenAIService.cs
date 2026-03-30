@@ -153,6 +153,13 @@ public class AzureOpenAIService
                 _logger.LogWarning(ex, "Server error on attempt {attempt}, retrying", attempt + 1);
                 await Task.Delay(RetryDelays[attempt], ct);
             }
+            catch (ClientResultException ex) when (ex.Status == 400 && ex.Message.Contains("content_filter"))
+            {
+                _logger.LogWarning("Content filter triggered on attempt {attempt}: {message}",
+                    attempt + 1, ex.Message);
+                throw new ContentFilterException(
+                    "Azure OpenAI content filter triggered — email content flagged as sensitive", ex);
+            }
         }
 
         throw new InvalidOperationException("AI completion failed after all retry attempts");
@@ -195,4 +202,14 @@ public class AzureOpenAIService
         PropertyNameCaseInsensitive = true,
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
     };
+}
+
+/// <summary>
+/// Thrown when Azure OpenAI's content filter rejects the prompt or response.
+/// Should be caught by callers to flag the email for manual review rather than retrying.
+/// </summary>
+public class ContentFilterException : Exception
+{
+    public ContentFilterException(string message, Exception innerException)
+        : base(message, innerException) { }
 }
