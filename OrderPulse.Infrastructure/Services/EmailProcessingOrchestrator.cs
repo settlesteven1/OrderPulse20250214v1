@@ -627,9 +627,20 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
         if (order is null)
         {
             order = await FindOrCreateOrderByReference(parsed.OrderReference, email, retailerContext, ct);
-            shipment ??= await _db.Shipments
-                .IgnoreQueryFilters()
-                .FirstOrDefaultAsync(s => s.OrderId == order.OrderId, ct);
+            if (shipment is null)
+            {
+                // Prefer a shipment that doesn't already have a Delivery record.
+                // This handles multi-shipment orders where each item is delivered separately
+                // and delivery emails arrive without tracking numbers. Without this preference,
+                // FirstOrDefault always returns the same shipment, and the second delivery email
+                // updates the existing Delivery instead of creating one on the undelivered shipment.
+                shipment = await _db.Shipments
+                    .IgnoreQueryFilters()
+                    .Include(s => s.Delivery)
+                    .Where(s => s.OrderId == order.OrderId)
+                    .OrderBy(s => s.Delivery == null ? 0 : 1) // prefer shipments without delivery
+                    .FirstOrDefaultAsync(ct);
+            }
         }
 
         // If no shipment exists yet, create one from the delivery info
