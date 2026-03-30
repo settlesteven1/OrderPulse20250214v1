@@ -82,7 +82,15 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
             return;
         }
 
-        // Set SESSION_CONTEXT for all subsequent DB operations
+        // Explicitly open the connection and keep it open for the entire processing pipeline.
+        // This ensures the SESSION_CONTEXT we set below persists across ALL subsequent
+        // SaveChangesAsync calls. Without this, EF Core opens/closes connections per operation,
+        // and the TenantSessionInterceptor may set a different tenant from the HTTP context,
+        // causing RLS block predicates to reject writes to Shipments, Deliveries, etc.
+        await _db.Database.OpenConnectionAsync(ct);
+        try
+        {
+        // Set SESSION_CONTEXT for all subsequent DB operations on this connection
         await _db.Database.ExecuteSqlRawAsync(
             "EXEC sp_set_session_context @key=N'TenantId', @value={0}",
             email.TenantId.ToString());
@@ -197,6 +205,11 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
             email.RetryCount++;
             await _db.SaveChangesAsync(ct);
             throw;
+        }
+        } // end try for OpenConnectionAsync
+        finally
+        {
+            await _db.Database.CloseConnectionAsync();
         }
     }
 
