@@ -550,13 +550,29 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
                 };
                 _db.Shipments.Add(shipment);
 
-                // Link shipment lines to order lines by product name match
-                foreach (var item in shipmentData.Items)
+                // For stub/inferred orders with no lines (e.g., subscription orders where no
+                // order confirmation email exists), create OrderLines from the shipment item data.
+                // This ensures the order shows items, prices, and totals even without an order email.
+                if (order.IsInferred && (order.Lines == null || order.Lines.Count == 0) && shipmentData.Items.Count > 0)
                 {
-                    var orderLine = order.Lines?.FirstOrDefault(l =>
-                        l.ProductName.Contains(item.ProductName, StringComparison.OrdinalIgnoreCase));
-                    if (orderLine is not null)
+                    var lineNum = 1;
+                    decimal totalAmount = 0;
+                    foreach (var item in shipmentData.Items)
                     {
+                        var orderLine = new OrderLine
+                        {
+                            OrderLineId = Guid.NewGuid(),
+                            OrderId = order.OrderId,
+                            LineNumber = lineNum++,
+                            ProductName = item.ProductName,
+                            Quantity = item.Quantity,
+                            UnitPrice = item.UnitPrice,
+                            LineTotal = item.UnitPrice * item.Quantity,
+                            Status = OrderLineStatus.Shipped
+                        };
+                        _db.OrderLines.Add(orderLine);
+                        totalAmount += orderLine.LineTotal;
+
                         _db.ShipmentLines.Add(new ShipmentLine
                         {
                             ShipmentLineId = Guid.NewGuid(),
@@ -564,8 +580,37 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
                             OrderLineId = orderLine.OrderLineId,
                             Quantity = item.Quantity
                         });
-                        orderLine.Status = OrderLineStatus.Shipped;
-                        orderLine.UpdatedAt = DateTime.UtcNow;
+                    }
+
+                    // Populate order totals from shipment data
+                    if (order.TotalAmount is null or 0)
+                    {
+                        order.Subtotal = totalAmount;
+                        order.TotalAmount = totalAmount;
+                    }
+
+                    await _log.Info(email.EmailMessageId, "ShipmentParser",
+                        $"Created {shipmentData.Items.Count} order lines from shipment data (stub/subscription order)");
+                }
+                else
+                {
+                    // Link shipment lines to existing order lines by product name match
+                    foreach (var item in shipmentData.Items)
+                    {
+                        var orderLine = order.Lines?.FirstOrDefault(l =>
+                            l.ProductName.Contains(item.ProductName, StringComparison.OrdinalIgnoreCase));
+                        if (orderLine is not null)
+                        {
+                            _db.ShipmentLines.Add(new ShipmentLine
+                            {
+                                ShipmentLineId = Guid.NewGuid(),
+                                ShipmentId = shipment.ShipmentId,
+                                OrderLineId = orderLine.OrderLineId,
+                                Quantity = item.Quantity
+                            });
+                            orderLine.Status = OrderLineStatus.Shipped;
+                            orderLine.UpdatedAt = DateTime.UtcNow;
+                        }
                     }
                 }
 
