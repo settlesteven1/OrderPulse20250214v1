@@ -21,6 +21,7 @@ public class EmailsController : ControllerBase
     private readonly OrderPulseDbContext _db;
     private readonly EmailBlobStorageService _blobStorage;
     private readonly IEmailParser<OrderParserResult> _orderParser;
+    private readonly IEmailParser<DeliveryParserResult> _deliveryParser;
 
     public EmailsController(
         IEmailMessageRepository emailRepo,
@@ -28,7 +29,8 @@ public class EmailsController : ControllerBase
         IEmailClassifier classifier,
         OrderPulseDbContext db,
         EmailBlobStorageService blobStorage,
-        IEmailParser<OrderParserResult> orderParser)
+        IEmailParser<OrderParserResult> orderParser,
+        IEmailParser<DeliveryParserResult> deliveryParser)
     {
         _emailRepo = emailRepo;
         _orchestrator = orchestrator;
@@ -36,6 +38,7 @@ public class EmailsController : ControllerBase
         _db = db;
         _blobStorage = blobStorage;
         _orderParser = orderParser;
+        _deliveryParser = deliveryParser;
     }
 
     /// <summary>
@@ -261,7 +264,12 @@ public class EmailsController : ControllerBase
 
         var body = fullBody ?? email.BodyPreview ?? "";
 
-        // Try order parser to see what it returns
+        // Pre-process body the same way the orchestrator does
+        var rawLen = body.Length;
+        var cleanedBody = ForwardedEmailHelper.ExtractOriginalBody(body);
+        var cleanedLen = cleanedBody.Length;
+
+        // Try the appropriate parser to see what it returns
         object? parserResult = null;
         string? parserError = null;
         if (email.ClassificationType == EmailClassificationType.OrderConfirmation ||
@@ -269,9 +277,10 @@ public class EmailsController : ControllerBase
         {
             try
             {
-                var result = await _orderParser.ParseAsync(email.Subject, body, email.FromAddress, null, ct);
+                var result = await _orderParser.ParseAsync(email.Subject, cleanedBody, email.FromAddress, null, ct);
                 parserResult = new
                 {
+                    parserType = "Order",
                     confidence = result.Confidence,
                     needsReview = result.NeedsReview,
                     hasData = result.Data != null,
@@ -279,6 +288,30 @@ public class EmailsController : ControllerBase
                     lineCount = result.Data?.Lines?.Count ?? 0,
                     orderNumber = result.Data?.Order?.ExternalOrderNumber,
                     totalAmount = result.Data?.Order?.TotalAmount,
+                    errorMessage = result.ErrorMessage
+                };
+            }
+            catch (Exception ex)
+            {
+                parserError = ex.Message;
+            }
+        }
+        else if (email.ClassificationType == EmailClassificationType.DeliveryConfirmation ||
+                 email.ClassificationType == EmailClassificationType.DeliveryIssue)
+        {
+            try
+            {
+                var result = await _deliveryParser.ParseAsync(email.Subject, cleanedBody, email.FromAddress, null, ct);
+                parserResult = new
+                {
+                    parserType = "Delivery",
+                    confidence = result.Confidence,
+                    needsReview = result.NeedsReview,
+                    hasData = result.Data != null,
+                    hasDelivery = result.Data?.Delivery != null,
+                    orderReference = result.Data?.Delivery?.OrderReference,
+                    status = result.Data?.Delivery?.Status,
+                    location = result.Data?.Delivery?.DeliveryLocation,
                     errorMessage = result.ErrorMessage
                 };
             }
@@ -302,7 +335,9 @@ public class EmailsController : ControllerBase
             previewLength = email.BodyPreview?.Length ?? 0,
             fullBodyLength,
             fullBodyAvailable = fullBody != null,
-            bodyFirst500 = body.Length > 500 ? body[..500] : body,
+            rawBodyLength = rawLen,
+            cleanedBodyLength = cleanedLen,
+            bodyFirst500 = cleanedBody.Length > 500 ? cleanedBody[..500] : cleanedBody,
             parserResult,
             parserError
         });
