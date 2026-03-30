@@ -109,6 +109,7 @@ public class ShipmentItemData
 {
     public string ProductName { get; set; } = string.Empty;
     public int Quantity { get; set; } = 1;
+    public decimal UnitPrice { get; set; }
 }
 
 // ── Delivery Parser ──

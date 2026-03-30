@@ -571,7 +571,7 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
                             Status = OrderLineStatus.Shipped
                         };
                         _db.OrderLines.Add(orderLine);
-                        totalAmount += orderLine.LineTotal;
+                        totalAmount += orderLine.LineTotal ?? 0;
 
                         _db.ShipmentLines.Add(new ShipmentLine
                         {

@@ -22,7 +22,8 @@ EXTRACTION RULES:
 - Extract the order number referenced in the email for matching to existing orders
 - If multiple shipments are described in one email, extract each as a separate shipment
 - Dates should be in ISO 8601 format (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ)
-- Extract which items are in this shipment if specified
+- Extract which items are in this shipment if specified, including unit prices when available
+- For subscription orders and other emails that show item prices, always extract the unit_price
 
 ORDER REFERENCE vs TRACKING NUMBER — these are DIFFERENT fields:
 - order_reference is the RETAILER ORDER NUMBER (e.g., Amazon: "112-4271087-1813067", Best Buy: "BBY01-8847261"). This is the customer-facing order ID.
@@ -46,7 +47,8 @@ OUTPUT SCHEMA:
       "items": [
         {
           "product_name": "string",
-          "quantity": 1
+          "quantity": 1,
+          "unit_price": 0.00
         }
       ]
     }
@@ -96,7 +98,8 @@ Track your package: https://www.fedex.com/fedextrack/?trknbr=7839274610394
       "items": [
         {
           "product_name": "LG C4 65\" 4K OLED TV",
-          "quantity": 1
+          "quantity": 1,
+          "unit_price": 0.00
         }
       ]
     }
@@ -144,7 +147,8 @@ Cable Clips, 3-Pack (Black) — shipping soon
       "items": [
         {
           "product_name": "Anker USB-C Hub, 7-in-1 Adapter",
-          "quantity": 1
+          "quantity": 1,
+          "unit_price": 0.00
         }
       ]
     }
