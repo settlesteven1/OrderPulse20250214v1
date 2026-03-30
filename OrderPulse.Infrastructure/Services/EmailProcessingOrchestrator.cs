@@ -175,9 +175,13 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
                 await _log.Warn(emailMessageId, "RouteResult", "No order ID returned from parser");
             }
 
-            email.ProcessingStatus = ProcessingStatus.Parsed;
-            email.ProcessedAt = DateTime.UtcNow;
-            await _db.SaveChangesAsync(ct);
+            // Only mark as Parsed if a sub-handler hasn't already flagged it for review
+            if (email.ProcessingStatus != ProcessingStatus.ManualReview)
+            {
+                email.ProcessingStatus = ProcessingStatus.Parsed;
+                email.ProcessedAt = DateTime.UtcNow;
+                await _db.SaveChangesAsync(ct);
+            }
 
             await _log.Success(emailMessageId, "Complete", "Email processing finished successfully");
         }

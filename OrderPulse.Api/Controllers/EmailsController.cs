@@ -83,10 +83,23 @@ public class EmailsController : ControllerBase
 
     /// <summary>
     /// Reprocess a failed or review-queued email (uses existing classification).
+    /// Resets status to Classified so the orchestrator's idempotency guard doesn't skip it.
     /// </summary>
     [HttpPost("{id:guid}/reprocess")]
     public async Task<ActionResult> Reprocess(Guid id, CancellationToken ct)
     {
+        var email = await _db.EmailMessages
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(e => e.EmailMessageId == id, ct);
+        if (email is null)
+            return NotFound(new { error = "Email not found" });
+
+        // Reset status so the orchestrator doesn't skip it (idempotency guard checks for Parsed)
+        email.ProcessingStatus = ProcessingStatus.Classified;
+        email.ErrorDetails = null;
+        email.ProcessedAt = null;
+        await _db.SaveChangesAsync(ct);
+
         await _orchestrator.ProcessEmailAsync(id, ct);
         return Ok();
     }
