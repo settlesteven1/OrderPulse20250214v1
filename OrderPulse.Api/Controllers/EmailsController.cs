@@ -22,6 +22,7 @@ public class EmailsController : ControllerBase
     private readonly EmailBlobStorageService _blobStorage;
     private readonly IEmailParser<OrderParserResult> _orderParser;
     private readonly IEmailParser<DeliveryParserResult> _deliveryParser;
+    private readonly OrderStateMachine _stateMachine;
 
     public EmailsController(
         IEmailMessageRepository emailRepo,
@@ -30,7 +31,8 @@ public class EmailsController : ControllerBase
         OrderPulseDbContext db,
         EmailBlobStorageService blobStorage,
         IEmailParser<OrderParserResult> orderParser,
-        IEmailParser<DeliveryParserResult> deliveryParser)
+        IEmailParser<DeliveryParserResult> deliveryParser,
+        OrderStateMachine stateMachine)
     {
         _emailRepo = emailRepo;
         _orchestrator = orchestrator;
@@ -39,6 +41,7 @@ public class EmailsController : ControllerBase
         _blobStorage = blobStorage;
         _orderParser = orderParser;
         _deliveryParser = deliveryParser;
+        _stateMachine = stateMachine;
     }
 
     /// <summary>
@@ -389,5 +392,44 @@ public class EmailsController : ControllerBase
             .ToListAsync(ct);
 
         return Ok(new { count = emails.Count, emails });
+    }
+
+    /// <summary>
+    /// Debug endpoint: recalculate status for all orders.
+    /// Useful after fixing state machine logic to propagate correct statuses.
+    /// </summary>
+    [AllowAnonymous]
+    [HttpPost("debug/recalculate-all")]
+    public async Task<ActionResult> RecalculateAllOrders(CancellationToken ct)
+    {
+        // Set tenant context for RLS
+        await _db.Database.OpenConnectionAsync(ct);
+        try
+        {
+            await _db.Database.ExecuteSqlRawAsync(
+                "EXEC sp_set_session_context @key=N'TenantId', @value={0}",
+                "215F9D63-05C2-4C4C-8548-1CD950DC430A");
+
+            var orders = await _db.Orders
+                .IgnoreQueryFilters()
+                .Where(o => o.TenantId == Guid.Parse("215F9D63-05C2-4C4C-8548-1CD950DC430A"))
+                .Select(o => new { o.OrderId, OldStatus = o.Status.ToString() })
+                .ToListAsync(ct);
+
+            var results = new List<object>();
+            foreach (var o in orders)
+            {
+                var newStatus = await _stateMachine.RecalculateStatusAsync(o.OrderId, ct);
+                results.Add(new { o.OrderId, oldStatus = o.OldStatus, newStatus = newStatus.ToString() });
+            }
+
+            await _db.SaveChangesAsync(ct);
+
+            return Ok(new { count = results.Count, results });
+        }
+        finally
+        {
+            await _db.Database.CloseConnectionAsync();
+        }
     }
 }

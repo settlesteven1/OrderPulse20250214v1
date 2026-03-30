@@ -29,6 +29,7 @@ public class OrderStateMachine
             .IgnoreQueryFilters()
             .Include(o => o.Lines)
             .Include(o => o.Shipments).ThenInclude(s => s.Delivery)
+            .Include(o => o.Shipments).ThenInclude(s => s.Lines)
             .Include(o => o.Returns)
             .Include(o => o.Refunds)
             .FirstOrDefaultAsync(o => o.OrderId == orderId, ct);
@@ -40,6 +41,33 @@ public class OrderStateMachine
         {
             order.Status = newStatus;
             order.UpdatedAt = DateTime.UtcNow;
+        }
+
+        // Sync line statuses to match the computed order status.
+        // When stub shipments are created without ShipmentLines (e.g., from delivery emails),
+        // individual line statuses never get updated by the shipment/delivery handlers.
+        // Propagate the order-level status down to lines that are still marked as Ordered/Shipped.
+        if (newStatus is OrderStatus.Delivered or OrderStatus.Closed)
+        {
+            foreach (var line in order.Lines.Where(l => l.Status is OrderLineStatus.Ordered or OrderLineStatus.Shipped))
+            {
+                line.Status = OrderLineStatus.Delivered;
+                line.UpdatedAt = DateTime.UtcNow;
+            }
+        }
+        else if (newStatus is OrderStatus.Shipped or OrderStatus.InTransit or OrderStatus.OutForDelivery
+                 or OrderStatus.PartiallyShipped)
+        {
+            // If all lines are still Ordered but shipments exist, mark them as Shipped
+            var hasShipmentLines = order.Shipments.SelectMany(s => s.Lines ?? Enumerable.Empty<ShipmentLine>()).Any();
+            if (!hasShipmentLines)
+            {
+                foreach (var line in order.Lines.Where(l => l.Status == OrderLineStatus.Ordered))
+                {
+                    line.Status = OrderLineStatus.Shipped;
+                    line.UpdatedAt = DateTime.UtcNow;
+                }
+            }
         }
 
         return newStatus;
@@ -91,6 +119,13 @@ public class OrderStateMachine
         var shippedLines = order.Shipments.SelectMany(s => s.Lines ?? Enumerable.Empty<ShipmentLine>()).Sum(sl => sl.Quantity);
         var deliveredLines = deliveredShipments.SelectMany(s => s.Lines ?? Enumerable.Empty<ShipmentLine>()).Sum(sl => sl.Quantity);
         var activeLines = totalLines - cancelledQty;
+
+        // When delivery/shipment emails create stub shipments without ShipmentLines
+        // (e.g., delivery arrives before shipment, or AI parser doesn't return item details),
+        // fall back to entity-level status. Without this, orders stay as "Placed" even though
+        // a delivery record confirms the package arrived.
+        if (shippedLines == 0 && (deliveredShipments.Any() || order.Shipments.Any()))
+            return ComputeStatusFromChildEntities(order);
 
         if (deliveredLines >= activeLines)
         {
