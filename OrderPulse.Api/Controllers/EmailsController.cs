@@ -521,4 +521,83 @@ public class EmailsController : ControllerBase
             await _db.Database.CloseConnectionAsync();
         }
     }
+
+    /// <summary>
+    /// Debug endpoint: reset an order by wiping all child entities (shipments, deliveries,
+    /// shipment lines, order events) and resetting order lines to Ordered status.
+    /// After calling this, reclassify the shipment/delivery emails to rebuild the data.
+    /// </summary>
+    [AllowAnonymous]
+    [HttpPost("debug/reset-order/{orderId:guid}")]
+    public async Task<ActionResult> ResetOrder(Guid orderId, CancellationToken ct)
+    {
+        await _db.Database.OpenConnectionAsync(ct);
+        try
+        {
+            var tenantId = Guid.Parse("215F9D63-05C2-4C4C-8548-1CD950DC430A");
+            await _db.Database.ExecuteSqlRawAsync(
+                "EXEC sp_set_session_context @key=N'TenantId', @value={0}",
+                tenantId.ToString());
+
+            var order = await _db.Orders
+                .IgnoreQueryFilters()
+                .Include(o => o.Lines)
+                .Include(o => o.Shipments).ThenInclude(s => s.Lines)
+                .Include(o => o.Shipments).ThenInclude(s => s.Delivery)
+                .FirstOrDefaultAsync(o => o.OrderId == orderId, ct);
+
+            if (order is null)
+                return NotFound(new { error = "Order not found" });
+
+            var stats = new {
+                orderId,
+                orderNumber = order.ExternalOrderNumber,
+                shipmentsRemoved = order.Shipments.Count,
+                deliveriesRemoved = order.Shipments.Count(s => s.Delivery != null),
+                shipmentLinesRemoved = order.Shipments.Sum(s => s.Lines?.Count ?? 0),
+                linesReset = order.Lines?.Count ?? 0
+            };
+
+            // Remove all deliveries
+            foreach (var shipment in order.Shipments)
+            {
+                if (shipment.Delivery != null)
+                    _db.Deliveries.Remove(shipment.Delivery);
+                if (shipment.Lines != null)
+                    _db.ShipmentLines.RemoveRange(shipment.Lines);
+            }
+
+            // Remove all shipments
+            _db.Shipments.RemoveRange(order.Shipments);
+
+            // Remove timeline events
+            var events = await _db.OrderEvents
+                .IgnoreQueryFilters()
+                .Where(e => e.OrderId == orderId)
+                .ToListAsync(ct);
+            _db.OrderEvents.RemoveRange(events);
+
+            // Reset order lines to Ordered status (keep the lines themselves)
+            if (order.Lines != null)
+            {
+                foreach (var line in order.Lines)
+                {
+                    line.Status = Domain.Enums.OrderLineStatus.Ordered;
+                    line.UpdatedAt = DateTime.UtcNow;
+                }
+            }
+
+            // Reset order status
+            order.Status = Domain.Enums.OrderStatus.Placed;
+            order.UpdatedAt = DateTime.UtcNow;
+
+            await _db.SaveChangesAsync(ct);
+
+            return Ok(new { message = "Order reset successfully", stats });
+        }
+        finally
+        {
+            await _db.Database.CloseConnectionAsync();
+        }
+    }
 }
