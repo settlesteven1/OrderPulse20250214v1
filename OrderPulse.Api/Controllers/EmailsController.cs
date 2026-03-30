@@ -103,8 +103,22 @@ public class EmailsController : ControllerBase
         email.ProcessedAt = null;
         await _db.SaveChangesAsync(ct);
 
-        await _orchestrator.ProcessEmailAsync(id, ct);
-        return Ok();
+        try
+        {
+            await _orchestrator.ProcessEmailAsync(id, ct);
+            return Ok(new { status = "success", emailId = id });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new
+            {
+                status = "error",
+                emailId = id,
+                error = ex.Message,
+                innerError = ex.InnerException?.Message,
+                stackTrace = ex.StackTrace?[..Math.Min(ex.StackTrace.Length, 500)]
+            });
+        }
     }
 
     /// <summary>
