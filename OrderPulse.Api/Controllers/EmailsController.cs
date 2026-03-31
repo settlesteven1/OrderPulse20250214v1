@@ -395,6 +395,41 @@ public class EmailsController : ControllerBase
     }
 
     /// <summary>
+    /// Debug endpoint: list ALL emails (no limit) with optional date filter.
+    /// </summary>
+    [AllowAnonymous]
+    [HttpGet("debug/list-all")]
+    public async Task<ActionResult> DebugListAll([FromQuery] string? before = null, CancellationToken ct = default)
+    {
+        await _db.Database.ExecuteSqlRawAsync(
+            "EXEC sp_set_session_context @key=N'TenantId', @value={0}",
+            "215F9D63-05C2-4C4C-8548-1CD950DC430A");
+
+        var query = _db.EmailMessages
+            .IgnoreQueryFilters()
+            .AsQueryable();
+
+        if (DateTime.TryParse(before, out var beforeDate))
+            query = query.Where(e => e.ReceivedAt < beforeDate);
+
+        var emails = await query
+            .OrderByDescending(e => e.ReceivedAt)
+            .Select(e => new
+            {
+                id = e.EmailMessageId,
+                subject = e.Subject,
+                from = e.FromAddress,
+                receivedAt = e.ReceivedAt,
+                classification = e.ClassificationType.ToString(),
+                status = e.ProcessingStatus.ToString(),
+                hasBlobUrl = !string.IsNullOrEmpty(e.BodyBlobUrl)
+            })
+            .ToListAsync(ct);
+
+        return Ok(new { count = emails.Count, emails });
+    }
+
+    /// <summary>
     /// Debug endpoint: get processing log entries for an email.
     /// </summary>
     [AllowAnonymous]
