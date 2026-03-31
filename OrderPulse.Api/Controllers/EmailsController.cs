@@ -395,6 +395,57 @@ public class EmailsController : ControllerBase
     }
 
     /// <summary>
+    /// Debug endpoint: get processing log entries for an email.
+    /// </summary>
+    [AllowAnonymous]
+    [HttpGet("debug/processing-log/{emailId:guid}")]
+    public async Task<ActionResult> DebugProcessingLog(Guid emailId, CancellationToken ct)
+    {
+        var logs = await _db.Database.SqlQueryRaw<ProcessingLogEntry>(
+            "SELECT TOP 100 Step, Status, Message, Details, CreatedAt FROM ProcessingLog WHERE EmailMessageId = {0} ORDER BY CreatedAt DESC",
+            emailId).ToListAsync(ct);
+        return Ok(logs);
+    }
+
+    /// <summary>
+    /// Debug endpoint: get full cleaned body for an email (for diagnosing splitter behavior).
+    /// </summary>
+    [AllowAnonymous]
+    [HttpGet("debug/email-body/{emailId:guid}")]
+    public async Task<ActionResult> DebugEmailBody(Guid emailId, CancellationToken ct)
+    {
+        var email = await _db.EmailMessages
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(e => e.EmailMessageId == emailId, ct);
+        if (email is null)
+            return NotFound(new { error = "Email not found" });
+
+        string? rawBody = null;
+        if (!string.IsNullOrEmpty(email.BodyBlobUrl))
+        {
+            try { rawBody = await _blobStorage.GetEmailBodyAsync(email.BodyBlobUrl, ct); }
+            catch { }
+        }
+
+        var body = rawBody ?? email.BodyPreview ?? "";
+        var cleanedBody = ForwardedEmailHelper.ExtractOriginalBody(body);
+
+        // Run the splitter regex to see what order numbers are detected
+        var orderNumberPattern = new System.Text.RegularExpressions.Regex(@"\b\d{3}-\d{7}-\d{7}\b");
+        var orderNumbers = orderNumberPattern.Matches(cleanedBody)
+            .Select(m => m.Value).Distinct().ToList();
+
+        return Ok(new
+        {
+            emailId,
+            rawBodyLength = body.Length,
+            cleanedBodyLength = cleanedBody.Length,
+            cleanedBody,
+            detectedOrderNumbers = orderNumbers
+        });
+    }
+
+    /// <summary>
     /// Debug endpoint: recalculate status for all orders.
     /// Useful after fixing state machine logic to propagate correct statuses.
     /// </summary>
@@ -600,4 +651,16 @@ public class EmailsController : ControllerBase
             await _db.Database.CloseConnectionAsync();
         }
     }
+}
+
+/// <summary>
+/// Lightweight DTO for reading ProcessingLog rows via raw SQL.
+/// </summary>
+public class ProcessingLogEntry
+{
+    public string Step { get; set; } = "";
+    public string Status { get; set; } = "";
+    public string Message { get; set; } = "";
+    public string? Details { get; set; }
+    public DateTime CreatedAt { get; set; }
 }
