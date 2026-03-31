@@ -625,12 +625,13 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
                 else
                 {
                     // Link shipment lines to existing order lines by product name match
+                    var matchedShipLineIds = new HashSet<Guid>();
                     foreach (var item in shipmentData.Items)
                     {
-                        var orderLine = order.Lines?.FirstOrDefault(l =>
-                            l.ProductName.Contains(item.ProductName, StringComparison.OrdinalIgnoreCase));
+                        var orderLine = MatchOrderLineByProductName(order.Lines, item.ProductName, matchedShipLineIds);
                         if (orderLine is not null)
                         {
+                            matchedShipLineIds.Add(orderLine.OrderLineId);
                             _db.ShipmentLines.Add(new ShipmentLine
                             {
                                 ShipmentLineId = Guid.NewGuid(),
@@ -901,12 +902,13 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
                 returnEntity.QRCodeData = "QR code provided in email";
 
             // Link return lines to order lines
+            var matchedRetLineIds = new HashSet<Guid>();
             foreach (var item in result.Data.Items)
             {
-                var orderLine = order.Lines?.FirstOrDefault(l =>
-                    l.ProductName.Contains(item.ProductName, StringComparison.OrdinalIgnoreCase));
+                var orderLine = MatchOrderLineByProductName(order.Lines, item.ProductName, matchedRetLineIds);
                 if (orderLine is not null)
                 {
+                    matchedRetLineIds.Add(orderLine.OrderLineId);
                     returnEntity.Lines.Add(new ReturnLine
                     {
                         ReturnLineId = Guid.NewGuid(),
@@ -1034,8 +1036,7 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
         // Mark cancelled items
         foreach (var cancelledItem in result.Data.CancelledItems)
         {
-            var orderLine = order.Lines?.FirstOrDefault(l =>
-                l.ProductName.Contains(cancelledItem.ProductName, StringComparison.OrdinalIgnoreCase));
+            var orderLine = MatchOrderLineByProductName(order.Lines, cancelledItem.ProductName);
             if (orderLine is not null)
             {
                 orderLine.Status = OrderLineStatus.Cancelled;
@@ -1111,6 +1112,109 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
     {
         // Strip leading #, trim whitespace and special chars
         return orderRef.TrimStart('#', ' ').Trim();
+    }
+
+    /// <summary>
+    /// Finds the best matching order line for a parsed product name using progressively
+    /// looser strategies: exact contains → normalized contains → prefix match → token overlap.
+    /// Amazon product names are often truncated differently between order confirmation and
+    /// shipment emails, so we need flexible matching that avoids false positives.
+    /// </summary>
+    private static OrderLine? MatchOrderLineByProductName(
+        IEnumerable<OrderLine>? orderLines, string parsedProductName, ICollection<Guid>? alreadyMatchedIds = null)
+    {
+        if (orderLines is null || string.IsNullOrWhiteSpace(parsedProductName))
+            return null;
+
+        var candidates = alreadyMatchedIds is not null
+            ? orderLines.Where(l => !alreadyMatchedIds.Contains(l.OrderLineId)).ToList()
+            : orderLines.ToList();
+
+        if (candidates.Count == 0)
+            return null;
+
+        var normalizedParsed = NormalizeProductName(parsedProductName);
+
+        // Strategy 1: exact Contains in either direction (original behavior)
+        var match = candidates.FirstOrDefault(l =>
+            l.ProductName.Contains(parsedProductName, StringComparison.OrdinalIgnoreCase) ||
+            parsedProductName.Contains(l.ProductName, StringComparison.OrdinalIgnoreCase));
+        if (match is not null) return match;
+
+        // Strategy 2: normalized Contains (strip ellipsis, extra whitespace, parenthetical notes)
+        match = candidates.FirstOrDefault(l =>
+        {
+            var normalizedLine = NormalizeProductName(l.ProductName);
+            return normalizedLine.Contains(normalizedParsed, StringComparison.OrdinalIgnoreCase) ||
+                   normalizedParsed.Contains(normalizedLine, StringComparison.OrdinalIgnoreCase);
+        });
+        if (match is not null) return match;
+
+        // Strategy 3: prefix match — if both names share a long enough common prefix (≥15 chars),
+        // they're almost certainly the same product (Amazon truncates at different points)
+        const int minPrefixLength = 15;
+        match = candidates
+            .Select(l => new { Line = l, Prefix = CommonPrefixLength(NormalizeProductName(l.ProductName), normalizedParsed) })
+            .Where(x => x.Prefix >= minPrefixLength)
+            .OrderByDescending(x => x.Prefix)
+            .FirstOrDefault()?.Line;
+        if (match is not null) return match;
+
+        // Strategy 4: token overlap — split into words and require ≥60% overlap
+        var parsedTokens = Tokenize(normalizedParsed);
+        if (parsedTokens.Count >= 2)
+        {
+            match = candidates
+                .Select(l => new { Line = l, Score = TokenOverlapScore(Tokenize(NormalizeProductName(l.ProductName)), parsedTokens) })
+                .Where(x => x.Score >= 0.6)
+                .OrderByDescending(x => x.Score)
+                .FirstOrDefault()?.Line;
+        }
+
+        return match;
+    }
+
+    /// <summary>
+    /// Normalizes a product name for comparison: strips trailing ellipsis, parenthetical
+    /// truncation notes, collapses whitespace, and removes stray punctuation.
+    /// </summary>
+    private static string NormalizeProductName(string name)
+    {
+        // Strip trailing "..." or "…"
+        var result = name.TrimEnd('.', '…', ' ');
+        // Remove parenthetical notes like "(full name truncated in email)"
+        result = System.Text.RegularExpressions.Regex.Replace(result, @"\(full name.*?\)", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        // Collapse whitespace
+        result = System.Text.RegularExpressions.Regex.Replace(result, @"\s+", " ");
+        return result.Trim();
+    }
+
+    private static int CommonPrefixLength(string a, string b)
+    {
+        var len = Math.Min(a.Length, b.Length);
+        for (var i = 0; i < len; i++)
+        {
+            if (char.ToLowerInvariant(a[i]) != char.ToLowerInvariant(b[i]))
+                return i;
+        }
+        return len;
+    }
+
+    private static HashSet<string> Tokenize(string text)
+    {
+        return text.Split(new[] { ' ', ',', '-', '(', ')', '/', '\\', '"', '\'' },
+                StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(t => t.Length >= 2) // skip single-char tokens
+            .Select(t => t.ToLowerInvariant())
+            .ToHashSet();
+    }
+
+    private static double TokenOverlapScore(HashSet<string> a, HashSet<string> b)
+    {
+        if (a.Count == 0 || b.Count == 0) return 0;
+        var intersection = a.Count(t => b.Contains(t));
+        var smaller = Math.Min(a.Count, b.Count);
+        return (double)intersection / smaller;
     }
 
     private async Task<Order?> FindOrderByReference(string? orderReference, Guid tenantId, CancellationToken ct)
@@ -1223,8 +1327,7 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
             var linkedCount = 0;
             foreach (var item in parsedItems)
             {
-                var orderLine = order.Lines.FirstOrDefault(l =>
-                    l.ProductName.Contains(item.ProductName, StringComparison.OrdinalIgnoreCase));
+                var orderLine = MatchOrderLineByProductName(order.Lines, item.ProductName);
                 if (orderLine is not null)
                 {
                     var alreadyLinked = shipment.Lines.Any(sl => sl.OrderLineId == orderLine.OrderLineId);
@@ -1273,8 +1376,7 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
             var linkedCount = 0;
             foreach (var item in parsedItems)
             {
-                var orderLine = order.Lines.FirstOrDefault(l =>
-                    l.ProductName.Contains(item.ProductName, StringComparison.OrdinalIgnoreCase));
+                var orderLine = MatchOrderLineByProductName(order.Lines, item.ProductName);
                 if (orderLine is not null)
                 {
                     var alreadyLinked = returnEntity.Lines.Any(rl => rl.OrderLineId == orderLine.OrderLineId);
@@ -1432,8 +1534,7 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
 
             foreach (var item in matchingShipmentData.Items)
             {
-                var orderLine = order.Lines?.FirstOrDefault(l =>
-                    l.ProductName.Contains(item.ProductName, StringComparison.OrdinalIgnoreCase));
+                var orderLine = MatchOrderLineByProductName(order.Lines, item.ProductName);
                 if (orderLine is not null)
                 {
                     _db.ShipmentLines.Add(new ShipmentLine
@@ -1465,8 +1566,7 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
 
             foreach (var item in result.Data.Items)
             {
-                var orderLine = order.Lines?.FirstOrDefault(l =>
-                    l.ProductName.Contains(item.ProductName, StringComparison.OrdinalIgnoreCase));
+                var orderLine = MatchOrderLineByProductName(order.Lines, item.ProductName);
                 if (orderLine is not null)
                 {
                     returnEntity.Lines.Add(new ReturnLine
