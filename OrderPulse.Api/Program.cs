@@ -55,6 +55,7 @@ builder.Services.AddSingleton<IEmailParser<ReturnParserResult>, ReturnParserServ
 builder.Services.AddSingleton<IEmailParser<RefundParserResult>, RefundParserService>();
 builder.Services.AddSingleton<IEmailParser<CancellationParserResult>, CancellationParserService>();
 builder.Services.AddSingleton<IEmailParser<PaymentParserResult>, PaymentParserService>();
+builder.Services.AddSingleton<EmailSectionSplitterService>();
 
 // ── Domain Services ──
 builder.Services.AddScoped<RetailerMatcher>();
