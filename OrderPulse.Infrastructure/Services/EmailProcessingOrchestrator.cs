@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using OrderPulse.Domain.Entities;
 using OrderPulse.Domain.Enums;
 using OrderPulse.Domain.Interfaces;
+using OrderPulse.Infrastructure.AI;
 using OrderPulse.Infrastructure.AI.Parsers;
 using OrderPulse.Infrastructure.Data;
 
@@ -21,6 +22,7 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
     private readonly OrderStateMachine _stateMachine;
     private readonly EmailBlobStorageService _blobStorage;
     private readonly ProcessingLogger _log;
+    private readonly EmailSectionSplitterService _sectionSplitter;
 
     // Parsers
     private readonly IEmailParser<OrderParserResult> _orderParser;
@@ -38,6 +40,7 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
         OrderStateMachine stateMachine,
         EmailBlobStorageService blobStorage,
         ProcessingLogger log,
+        EmailSectionSplitterService sectionSplitter,
         IEmailParser<OrderParserResult> orderParser,
         IEmailParser<ShipmentParserResult> shipmentParser,
         IEmailParser<DeliveryParserResult> deliveryParser,
@@ -52,6 +55,7 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
         _stateMachine = stateMachine;
         _blobStorage = blobStorage;
         _log = log;
+        _sectionSplitter = sectionSplitter;
         _orderParser = orderParser;
         _shipmentParser = shipmentParser;
         _deliveryParser = deliveryParser;
@@ -164,8 +168,34 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
                     $"Stripped: {rawLength} \u2192 {body.Length} chars");
             }
 
-            // Route to the appropriate parser
-            var orderIds = await RouteAndProcessAsync(email, body, retailerContext, ct);
+            // Split multi-order emails into per-order sections before parsing.
+            // Single-order emails pass through with zero AI cost (regex heuristic).
+            var sections = await _sectionSplitter.SplitAsync(
+                email.Subject, body, email.ClassificationType, ct);
+
+            if (sections.Count > 1)
+            {
+                await _log.Info(emailMessageId, "SectionSplitter",
+                    $"Split email into {sections.Count} sections",
+                    string.Join(", ", sections.SelectMany(s => s.DetectedOrderReferences)));
+            }
+
+            // Route each section to the appropriate parser
+            var orderIds = new List<Guid>();
+            foreach (var section in sections)
+            {
+                var sectionBody = section.Body;
+                if (sections.Count > 1)
+                {
+                    await _log.Info(emailMessageId, "SectionSplitter",
+                        $"Processing section {section.SectionIndex + 1}/{sections.Count}",
+                        $"Order refs: [{string.Join(", ", section.DetectedOrderReferences)}], " +
+                        $"Body length: {sectionBody.Length}");
+                }
+
+                var sectionOrderIds = await RouteAndProcessAsync(email, sectionBody, retailerContext, ct);
+                orderIds.AddRange(sectionOrderIds);
+            }
 
             if (orderIds.Count > 0)
             {

@@ -51,6 +51,7 @@ var host = new HostBuilder()
         services.AddSingleton<IEmailParser<RefundParserResult>, RefundParserService>();
         services.AddSingleton<IEmailParser<CancellationParserResult>, CancellationParserService>();
         services.AddSingleton<IEmailParser<PaymentParserResult>, PaymentParserService>();
+        services.AddSingleton<EmailSectionSplitterService>();
 
         // ── Domain Services ──
         services.AddScoped<RetailerMatcher>();
