@@ -15,6 +15,7 @@ public class OrderLine
     public decimal? LineTotal { get; set; }
     public OrderLineStatus Status { get; set; } = OrderLineStatus.Ordered;
     public string? ImageUrl { get; set; }
+    public ItemCategory? ItemCategory { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
@@ -22,4 +23,5 @@ public class OrderLine
     public Order Order { get; set; } = null!;
     public ICollection<ShipmentLine> ShipmentLines { get; set; } = new List<ShipmentLine>();
     public ICollection<ReturnLine> ReturnLines { get; set; } = new List<ReturnLine>();
+    public InventoryItem? InventoryItem { get; set; }
 }

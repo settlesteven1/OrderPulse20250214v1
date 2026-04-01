@@ -1,0 +1,363 @@
+@page "/inventory"
+@attribute [Authorize]
+
+<PageTitle>Inventory - OrderPulse</PageTitle>
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.5rem;">
+    <h2 style="font-size:1.5rem;font-weight:700;">Inventory</h2>
+    <div style="display:flex;gap:0.5rem;align-items:center;">
+        <input type="text" placeholder="Search products..."
+               style="padding:0.5rem 1rem;border-radius:8px;border:1px solid #334155;background:#1e293b;color:#e2e8f0;width:250px;"
+               @bind="_search" @bind:event="oninput" @onkeyup="OnSearchKeyUp" />
+    </div>
+</div>
+
+<!-- Category Tabs -->
+<div style="display:flex;gap:0.5rem;margin-bottom:1rem;">
+    <button class="filter-chip @(_activeCategory == "Consumable" ? "active" : "")"
+            @onclick="@(() => SetCategory("Consumable"))">
+        Consumable @CountBadge(_consumableCount)
+    </button>
+    <button class="filter-chip @(_activeCategory == "Durable" ? "active" : "")"
+            @onclick="@(() => SetCategory("Durable"))">
+        Durable @CountBadge(_durableCount)
+    </button>
+    <button class="filter-chip @(_activeCategory == null ? "active" : "")"
+            @onclick="@(() => SetCategory(null))">
+        All
+    </button>
+</div>
+
+<div class="card" style="background:#1e293b;border-radius:12px;overflow:hidden;">
+    @if (_loading)
+    {
+        <div style="padding:3rem;text-align:center;color:#94a3b8;">Loading inventory...</div>
+    }
+    else if (_items.Count == 0)
+    {
+        <div style="padding:3rem;text-align:center;color:#94a3b8;">
+            No inventory items found. Items will appear here when orders are delivered.
+        </div>
+    }
+    else
+    {
+        <table style="width:100%;border-collapse:collapse;">
+            <thead>
+                <tr style="border-bottom:1px solid #334155;text-align:left;">
+                    <th style="padding:0.75rem 1rem;color:#94a3b8;font-weight:600;font-size:0.8rem;text-transform:uppercase;">Product</th>
+                    <th style="padding:0.75rem 1rem;color:#94a3b8;font-weight:600;font-size:0.8rem;text-transform:uppercase;">Order #</th>
+                    <th style="padding:0.75rem 1rem;color:#94a3b8;font-weight:600;font-size:0.8rem;text-transform:uppercase;">Type</th>
+                    @if (_activeCategory == "Durable")
+                    {
+                        <th style="padding:0.75rem 1rem;color:#94a3b8;font-weight:600;font-size:0.8rem;text-transform:uppercase;">Status</th>
+                        <th style="padding:0.75rem 1rem;color:#94a3b8;font-weight:600;font-size:0.8rem;text-transform:uppercase;">Condition</th>
+                    }
+                    <th style="padding:0.75rem 1rem;color:#94a3b8;font-weight:600;font-size:0.8rem;text-transform:uppercase;">Qty</th>
+                    <th style="padding:0.75rem 1rem;color:#94a3b8;font-weight:600;font-size:0.8rem;text-transform:uppercase;">Delivered</th>
+                    <th style="padding:0.75rem 1rem;color:#94a3b8;font-weight:600;font-size:0.8rem;text-transform:uppercase;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var item in _items)
+                {
+                    <tr style="border-bottom:1px solid #1e293b;cursor:pointer;" @onclick="@(() => SelectItem(item))">
+                        <td style="padding:0.75rem 1rem;color:#e2e8f0;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                            @item.ProductName
+                        </td>
+                        <td style="padding:0.75rem 1rem;color:#94a3b8;font-size:0.85rem;">
+                            @(item.ExternalOrderNumber ?? "—")
+                        </td>
+                        <td style="padding:0.75rem 1rem;">
+                            <span style="padding:0.2rem 0.6rem;border-radius:12px;font-size:0.75rem;font-weight:600;
+                                @(item.ItemCategory == "Durable"
+                                    ? "background:#312e81;color:#a5b4fc;"
+                                    : "background:#064e3b;color:#6ee7b7;")">
+                                @item.ItemCategory
+                            </span>
+                        </td>
+                        @if (_activeCategory == "Durable")
+                        {
+                            <td style="padding:0.75rem 1rem;">
+                                <span style="padding:0.2rem 0.6rem;border-radius:12px;font-size:0.75rem;
+                                    @StatusColor(item.UnitStatus)">
+                                    @(item.UnitStatus ?? "—")
+                                </span>
+                            </td>
+                            <td style="padding:0.75rem 1rem;color:#94a3b8;font-size:0.85rem;">
+                                @(item.Condition ?? "—")
+                            </td>
+                        }
+                        <td style="padding:0.75rem 1rem;color:#e2e8f0;font-weight:600;">
+                            @item.QuantityOnHand
+                        </td>
+                        <td style="padding:0.75rem 1rem;color:#94a3b8;font-size:0.85rem;">
+                            @(item.DeliveryDate?.ToString("MMM d, yyyy") ?? "—")
+                        </td>
+                        <td style="padding:0.75rem 1rem;">
+                            <button style="padding:0.3rem 0.8rem;border-radius:6px;background:#334155;color:#e2e8f0;border:none;cursor:pointer;font-size:0.8rem;"
+                                    @onclick:stopPropagation="true"
+                                    @onclick="@(() => OpenAdjustModal(item))">
+                                Adjust
+                            </button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+
+        <!-- Pagination -->
+        @if (_pagination is not null && _pagination.TotalPages > 1)
+        {
+            <div style="display:flex;justify-content:center;align-items:center;gap:1rem;padding:1rem;">
+                <button style="padding:0.4rem 1rem;border-radius:6px;background:#334155;color:#e2e8f0;border:none;cursor:pointer;"
+                        disabled="@(_page <= 1)" @onclick="PreviousPage">Previous</button>
+                <span style="color:#94a3b8;font-size:0.85rem;">
+                    Page @_page of @_pagination.TotalPages (@_pagination.TotalCount items)
+                </span>
+                <button style="padding:0.4rem 1rem;border-radius:6px;background:#334155;color:#e2e8f0;border:none;cursor:pointer;"
+                        disabled="@(_page >= _pagination.TotalPages)" @onclick="NextPage">Next</button>
+            </div>
+        }
+    }
+</div>
+
+<!-- Adjust Modal -->
+@if (_showAdjustModal && _selectedItem is not null)
+{
+    <div style="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:1000;"
+         @onclick="CloseModal">
+        <div style="background:#1e293b;border-radius:12px;padding:2rem;width:400px;max-width:90vw;" @onclick:stopPropagation="true">
+            <h3 style="font-size:1.1rem;font-weight:700;margin-bottom:1rem;color:#e2e8f0;">
+                Adjust: @_selectedItem.ProductName
+            </h3>
+            <div style="margin-bottom:0.75rem;color:#94a3b8;font-size:0.85rem;">
+                Current quantity: <strong style="color:#e2e8f0;">@_selectedItem.QuantityOnHand</strong>
+            </div>
+
+            <div style="margin-bottom:1rem;">
+                <label style="display:block;color:#94a3b8;font-size:0.8rem;margin-bottom:0.3rem;">Quantity Change</label>
+                <input type="number" @bind="_adjustDelta"
+                       style="width:100%;padding:0.5rem;border-radius:6px;border:1px solid #334155;background:#0f172a;color:#e2e8f0;" />
+                <div style="color:#64748b;font-size:0.75rem;margin-top:0.2rem;">Use negative for decrease (e.g. -1)</div>
+            </div>
+
+            <div style="margin-bottom:1rem;">
+                <label style="display:block;color:#94a3b8;font-size:0.8rem;margin-bottom:0.3rem;">Reason</label>
+                <select @bind="_adjustReason"
+                        style="width:100%;padding:0.5rem;border-radius:6px;border:1px solid #334155;background:#0f172a;color:#e2e8f0;">
+                    <option value="">Select a reason...</option>
+                    <option value="Used">Used</option>
+                    <option value="Damaged">Damaged</option>
+                    <option value="Lost">Lost</option>
+                    <option value="Disposed">Disposed</option>
+                    <option value="Correction">Correction</option>
+                    <option value="Gift">Gift / Given Away</option>
+                    <option value="Other">Other</option>
+                </select>
+            </div>
+
+            <div style="margin-bottom:1.5rem;">
+                <label style="display:block;color:#94a3b8;font-size:0.8rem;margin-bottom:0.3rem;">Notes (optional)</label>
+                <input type="text" @bind="_adjustNotes" placeholder="Additional details..."
+                       style="width:100%;padding:0.5rem;border-radius:6px;border:1px solid #334155;background:#0f172a;color:#e2e8f0;" />
+            </div>
+
+            <div style="display:flex;gap:0.5rem;justify-content:flex-end;">
+                <button style="padding:0.5rem 1rem;border-radius:6px;background:#334155;color:#e2e8f0;border:none;cursor:pointer;"
+                        @onclick="CloseModal">Cancel</button>
+                <button style="padding:0.5rem 1rem;border-radius:6px;background:#2563eb;color:white;border:none;cursor:pointer;font-weight:600;"
+                        disabled="@(_adjustDelta == 0 || string.IsNullOrEmpty(_adjustReason) || _adjusting)"
+                        @onclick="SubmitAdjustment">
+                    @(_adjusting ? "Saving..." : "Save Adjustment")
+                </button>
+            </div>
+
+            @if (!string.IsNullOrEmpty(_adjustError))
+            {
+                <div style="margin-top:0.75rem;color:#f87171;font-size:0.85rem;">@_adjustError</div>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [Inject] private OrderPulse.Web.Services.InventoryService InventorySvc { get; set; } = default!;
+    [Inject] private NavigationManager Navigation { get; set; } = default!;
+
+    private List<InventoryItemModel> _items = new();
+    private PaginationMeta? _pagination;
+    private bool _loading = true;
+
+    // Filters
+    private string? _activeCategory = "Consumable";
+    private string _search = "";
+    private int _page = 1;
+    private int _pageSize = 25;
+
+    // Counts for badges
+    private int _consumableCount;
+    private int _durableCount;
+
+    // Adjust modal
+    private bool _showAdjustModal;
+    private InventoryItemModel? _selectedItem;
+    private int _adjustDelta;
+    private string _adjustReason = "";
+    private string? _adjustNotes;
+    private bool _adjusting;
+    private string? _adjustError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadCountsAsync();
+        await LoadInventoryAsync();
+    }
+
+    private async Task LoadCountsAsync()
+    {
+        try
+        {
+            var (consumable, _) = await InventorySvc.GetInventoryAsync(category: "Consumable", pageSize: 1);
+            var (durable, durPag) = await InventorySvc.GetInventoryAsync(category: "Durable", pageSize: 1);
+
+            // Use pagination total counts
+            var (_, conPag) = await InventorySvc.GetInventoryAsync(category: "Consumable", pageSize: 1);
+            _consumableCount = conPag?.TotalCount ?? 0;
+            _durableCount = durPag?.TotalCount ?? 0;
+        }
+        catch
+        {
+            // Counts are non-critical
+        }
+    }
+
+    private async Task LoadInventoryAsync()
+    {
+        _loading = true;
+        StateHasChanged();
+
+        try
+        {
+            var (items, pagination) = await InventorySvc.GetInventoryAsync(
+                category: _activeCategory,
+                search: _search,
+                page: _page,
+                pageSize: _pageSize);
+
+            _items = items;
+            _pagination = pagination;
+        }
+        catch
+        {
+            _items = new();
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task SetCategory(string? category)
+    {
+        _activeCategory = category;
+        _page = 1;
+        await LoadInventoryAsync();
+    }
+
+    private async Task OnSearchKeyUp(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            _page = 1;
+            await LoadInventoryAsync();
+        }
+    }
+
+    private async Task PreviousPage()
+    {
+        if (_page > 1)
+        {
+            _page--;
+            await LoadInventoryAsync();
+        }
+    }
+
+    private async Task NextPage()
+    {
+        if (_pagination is not null && _page < _pagination.TotalPages)
+        {
+            _page++;
+            await LoadInventoryAsync();
+        }
+    }
+
+    private void SelectItem(InventoryItemModel item)
+    {
+        // Could navigate to a detail view in the future
+    }
+
+    private void OpenAdjustModal(InventoryItemModel item)
+    {
+        _selectedItem = item;
+        _adjustDelta = 0;
+        _adjustReason = "";
+        _adjustNotes = null;
+        _adjustError = null;
+        _showAdjustModal = true;
+    }
+
+    private void CloseModal()
+    {
+        _showAdjustModal = false;
+        _selectedItem = null;
+    }
+
+    private async Task SubmitAdjustment()
+    {
+        if (_selectedItem is null || _adjustDelta == 0 || string.IsNullOrEmpty(_adjustReason)) return;
+
+        _adjusting = true;
+        _adjustError = null;
+        StateHasChanged();
+
+        try
+        {
+            var success = await InventorySvc.AdjustInventoryAsync(
+                _selectedItem.InventoryItemId, _adjustDelta, _adjustReason, _adjustNotes);
+
+            if (success)
+            {
+                CloseModal();
+                await LoadInventoryAsync();
+                await LoadCountsAsync();
+            }
+            else
+            {
+                _adjustError = "Failed to save adjustment. Please try again.";
+            }
+        }
+        catch (Exception ex)
+        {
+            _adjustError = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            _adjusting = false;
+        }
+    }
+
+    private static string StatusColor(string? status) => status switch
+    {
+        "Owned" => "background:#064e3b;color:#6ee7b7;",
+        "Returned" => "background:#7c2d12;color:#fdba74;",
+        "Disposed" => "background:#374151;color:#9ca3af;",
+        "Lost" => "background:#7f1d1d;color:#fca5a5;",
+        "Damaged" => "background:#78350f;color:#fde68a;",
+        _ => "background:#374151;color:#9ca3af;"
+    };
+
+    private static MarkupString CountBadge(int count) =>
+        count > 0
+            ? new MarkupString($"<span style=\"margin-left:0.3rem;padding:0.1rem 0.5rem;border-radius:10px;background:#334155;color:#94a3b8;font-size:0.75rem;\">{count}</span>")
+            : new MarkupString("");
+}

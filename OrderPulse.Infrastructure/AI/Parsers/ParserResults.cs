@@ -80,6 +80,8 @@ public class OrderLineData
     public decimal? UnitPrice { get; set; }
     public decimal? LineTotal { get; set; }
     public string? ImageUrl { get; set; }
+    /// <summary>AI-classified: "durable" or "consumable"</summary>
+    public string? ItemCategory { get; set; }
 }
 
 // ── Shipment Parser ──

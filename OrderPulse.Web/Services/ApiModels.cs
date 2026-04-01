@@ -7,7 +7,7 @@ namespace OrderPulse.Web.Services;
 public class ApiResponse<T>
 {
     public T? Data { get; set; }
-    public PaginationMeta? Pagination { get; set; }
+    public PaginationMeta? Meta { get; set; }
 }
 
 public class PaginationMeta
@@ -15,7 +15,7 @@ public class PaginationMeta
     public int Page { get; set; }
     public int PageSize { get; set; }
     public int TotalCount { get; set; }
-    public int TotalPages { get; set; }
+    public int TotalPages => PageSize > 0 ? (int)Math.Ceiling((double)TotalCount / PageSize) : 0;
 }
 
 // ── Dashboard ──
@@ -112,4 +112,40 @@ public class TimelineEvent
     public DateTime EventDate { get; set; }
     public string Summary { get; set; } = string.Empty;
     public string? Details { get; set; }
+}
+
+// ── Inventory ──
+
+public class InventoryItemModel
+{
+    public Guid InventoryItemId { get; set; }
+    public Guid OrderLineId { get; set; }
+    public Guid OrderId { get; set; }
+    public string ProductName { get; set; } = string.Empty;
+    public string ItemCategory { get; set; } = string.Empty;
+    public int QuantityOnHand { get; set; }
+    public string? UnitStatus { get; set; }
+    public string? Condition { get; set; }
+    public DateTime? PurchaseDate { get; set; }
+    public DateTime? DeliveryDate { get; set; }
+    public string? ExternalOrderNumber { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public DateTime UpdatedAt { get; set; }
+}
+
+public class InventoryItemDetailModel : InventoryItemModel
+{
+    public List<InventoryAdjustmentModel> RecentAdjustments { get; set; } = new();
+}
+
+public class InventoryAdjustmentModel
+{
+    public Guid AdjustmentId { get; set; }
+    public int QuantityDelta { get; set; }
+    public int PreviousQuantity { get; set; }
+    public int NewQuantity { get; set; }
+    public string Reason { get; set; } = string.Empty;
+    public string? Notes { get; set; }
+    public string? AdjustedBy { get; set; }
+    public DateTime AdjustedAt { get; set; }
 }
