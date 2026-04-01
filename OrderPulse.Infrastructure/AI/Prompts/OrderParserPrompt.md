@@ -22,6 +22,10 @@ EXTRACTION RULES:
 - Extract payment method summary if available (e.g., "Visa ending in 4242").
 - Shipping address should be the full address as a single string.
 - If this is an ORDER MODIFICATION, set is_modification to true and note what changed.
+- ITEM CLASSIFICATION: For each line item, classify it as either "durable" or "consumable":
+  - "durable" = items expected to last a long time with repeated use (electronics, tools, furniture, appliances, clothing, bags, accessories, hardware)
+  - "consumable" = items that get used up or have a short lifespan (food, drinks, batteries, cleaning supplies, paper products, ink/toner, personal care, vitamins, supplements)
+  - When uncertain, default to "durable".
 
 MULTI-ORDER EMAILS:
 Some retailers (especially Amazon) split a single purchase into multiple orders based on fulfiller/seller.
@@ -58,7 +62,8 @@ OUTPUT SCHEMA (single order):
       "quantity": 1,
       "unit_price": number | null,
       "line_total": number | null,
-      "image_url": "string | null"
+      "image_url": "string | null",
+      "item_category": "durable | consumable"
     }
   ],
   "confidence": 0.95,
@@ -156,7 +161,8 @@ Payment: Visa ending in 4242
       "quantity": 1,
       "unit_price": 35.99,
       "line_total": 35.99,
-      "image_url": null
+      "image_url": null,
+      "item_category": "durable"
     },
     {
       "product_name": "Cable Clips, 3-Pack (Black)",
@@ -165,7 +171,8 @@ Payment: Visa ending in 4242
       "quantity": 1,
       "unit_price": 11.99,
       "line_total": 11.99,
-      "image_url": null
+      "image_url": null,
+      "item_category": "durable"
     }
   ],
   "confidence": 0.97,
@@ -226,7 +233,8 @@ Paid with PayPal
       "quantity": 1,
       "unit_price": 52.00,
       "line_total": 52.00,
-      "image_url": null
+      "image_url": null,
+      "item_category": "durable"
     }
   ],
   "confidence": 0.94,
@@ -307,7 +315,8 @@ Payment: Visa ending in 4242
           "quantity": 1,
           "unit_price": 29.99,
           "line_total": 29.99,
-          "image_url": null
+          "image_url": null,
+          "item_category": "durable"
         }
       ]
     },
@@ -337,7 +346,8 @@ Payment: Visa ending in 4242
           "quantity": 2,
           "unit_price": 8.99,
           "line_total": 17.98,
-          "image_url": null
+          "image_url": null,
+          "item_category": "consumable"
         }
       ]
     },
@@ -367,7 +377,8 @@ Payment: Visa ending in 4242
           "quantity": 1,
           "unit_price": 24.99,
           "line_total": 24.99,
-          "image_url": null
+          "image_url": null,
+          "item_category": "durable"
         }
       ]
     }

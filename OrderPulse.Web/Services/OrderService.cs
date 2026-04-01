@@ -29,7 +29,7 @@ public class OrderService
         var url = $"api/orders?{string.Join("&", queryParams)}";
         var response = await _http.GetFromJsonAsync<ApiResponse<List<OrderListItem>>>(url);
 
-        return (response?.Data ?? new(), response?.Pagination);
+        return (response?.Data ?? new(), response?.Meta);
     }
 
     public async Task<OrderDetailModel?> GetOrderDetailModelAsync(Guid orderId)

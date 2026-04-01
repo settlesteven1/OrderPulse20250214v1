@@ -23,6 +23,7 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
     private readonly EmailBlobStorageService _blobStorage;
     private readonly ProcessingLogger _log;
     private readonly EmailSectionSplitterService _sectionSplitter;
+    private readonly InventoryService _inventoryService;
 
     // Parsers
     private readonly IEmailParser<OrderParserResult> _orderParser;
@@ -41,6 +42,7 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
         EmailBlobStorageService blobStorage,
         ProcessingLogger log,
         EmailSectionSplitterService sectionSplitter,
+        InventoryService inventoryService,
         IEmailParser<OrderParserResult> orderParser,
         IEmailParser<ShipmentParserResult> shipmentParser,
         IEmailParser<DeliveryParserResult> deliveryParser,
@@ -56,6 +58,7 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
         _blobStorage = blobStorage;
         _log = log;
         _sectionSplitter = sectionSplitter;
+        _inventoryService = inventoryService;
         _orderParser = orderParser;
         _shipmentParser = shipmentParser;
         _deliveryParser = deliveryParser;
@@ -474,6 +477,7 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
                 UnitPrice = line.UnitPrice,
                 LineTotal = line.LineTotal,
                 ImageUrl = line.ImageUrl,
+                ItemCategory = ParseItemCategory(line.ItemCategory),
                 Status = OrderLineStatus.Ordered
             });
         }
@@ -803,6 +807,22 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
         }
 
         await _db.SaveChangesAsync(ct);
+
+        // Create inventory items for delivered shipments
+        if (deliveryStatus == DeliveryStatus.Delivered)
+        {
+            try
+            {
+                await _inventoryService.CreateInventoryForDeliveryAsync(
+                    shipment.ShipmentId, email.TenantId, delivery.DeliveryDate ?? DateTime.UtcNow, ct);
+                await _db.SaveChangesAsync(ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to create inventory for shipment {ShipmentId}, delivery processing continues", shipment.ShipmentId);
+            }
+        }
+
         return order?.OrderId;
     }
 
@@ -939,6 +959,21 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
             eventSummary, parsed.ReturnReason, ct);
 
         await _db.SaveChangesAsync(ct);
+
+        // Update inventory for returned items
+        if (returnEntity.Lines.Count > 0)
+        {
+            try
+            {
+                await _inventoryService.ProcessReturnInventoryAsync(returnEntity, email.TenantId, ct);
+                await _db.SaveChangesAsync(ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to update inventory for return {ReturnId}, return processing continues", returnEntity.ReturnId);
+            }
+        }
+
         return order.OrderId;
     }
 
@@ -1469,6 +1504,7 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
                 UnitPrice = line.UnitPrice,
                 LineTotal = line.LineTotal,
                 ImageUrl = line.ImageUrl,
+                ItemCategory = ParseItemCategory(line.ItemCategory),
                 Status = OrderLineStatus.Ordered
             });
         }
@@ -1685,6 +1721,14 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
             "mail" => ReturnMethod.Mail,
             "dropoff" => ReturnMethod.DropOff,
             "pickup" => ReturnMethod.Pickup,
+            _ => null
+        };
+
+    private static ItemCategory? ParseItemCategory(string? category) =>
+        category?.ToLowerInvariant() switch
+        {
+            "durable" => ItemCategory.Durable,
+            "consumable" => ItemCategory.Consumable,
             _ => null
         };
 

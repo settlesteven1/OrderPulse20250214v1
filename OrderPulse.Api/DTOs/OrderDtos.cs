@@ -237,3 +237,59 @@ public record HistoricalImportResultDto(
     int EmailsQueued,
     string? Message
 );
+
+// ── Inventory ──
+public record InventoryItemDto(
+    Guid InventoryItemId,
+    Guid OrderLineId,
+    Guid OrderId,
+    string ProductName,
+    string ItemCategory,
+    int QuantityOnHand,
+    string? UnitStatus,
+    string? Condition,
+    DateTime? PurchaseDate,
+    DateTime? DeliveryDate,
+    string? ExternalOrderNumber,
+    DateTime CreatedAt,
+    DateTime UpdatedAt
+);
+
+public record InventoryItemDetailDto(
+    Guid InventoryItemId,
+    Guid OrderLineId,
+    Guid OrderId,
+    string ProductName,
+    string ItemCategory,
+    int QuantityOnHand,
+    string? UnitStatus,
+    string? Condition,
+    DateTime? PurchaseDate,
+    DateTime? DeliveryDate,
+    string? ExternalOrderNumber,
+    DateTime CreatedAt,
+    DateTime UpdatedAt,
+    IReadOnlyList<InventoryAdjustmentDto> RecentAdjustments
+);
+
+public record InventoryAdjustmentDto(
+    Guid AdjustmentId,
+    int QuantityDelta,
+    int PreviousQuantity,
+    int NewQuantity,
+    string Reason,
+    string? Notes,
+    string? AdjustedBy,
+    DateTime AdjustedAt
+);
+
+public record AdjustInventoryRequest(
+    int QuantityDelta,
+    string Reason,
+    string? Notes
+);
+
+public record UpdateInventoryStatusRequest(
+    string? UnitStatus,
+    string? Condition
+);

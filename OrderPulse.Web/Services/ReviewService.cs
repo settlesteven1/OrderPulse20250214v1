@@ -12,7 +12,7 @@ public class ReviewService
     {
         var url = $"api/review?page={page}&pageSize={pageSize}";
         var response = await _http.GetFromJsonAsync<ApiResponse<List<ReviewQueueItem>>>(url);
-        return (response?.Data ?? new(), response?.Pagination);
+        return (response?.Data ?? new(), response?.Meta);
     }
 
     public async Task<ReviewDetail?> GetDetailAsync(Guid emailMessageId)

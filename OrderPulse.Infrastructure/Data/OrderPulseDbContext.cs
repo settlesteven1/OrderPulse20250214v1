@@ -25,6 +25,8 @@ public class OrderPulseDbContext : DbContext
     public DbSet<ReturnLine> ReturnLines => Set<ReturnLine>();
     public DbSet<Refund> Refunds => Set<Refund>();
     public DbSet<OrderEvent> OrderEvents => Set<OrderEvent>();
+    public DbSet<InventoryItem> InventoryItems => Set<InventoryItem>();
+    public DbSet<InventoryAdjustment> InventoryAdjustments => Set<InventoryAdjustment>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -42,6 +44,8 @@ public class OrderPulseDbContext : DbContext
         modelBuilder.Entity<Return>().HasQueryFilter(e => e.TenantId == tenantId);
         modelBuilder.Entity<Refund>().HasQueryFilter(e => e.TenantId == tenantId);
         modelBuilder.Entity<OrderEvent>().HasQueryFilter(e => e.TenantId == tenantId);
+        modelBuilder.Entity<InventoryItem>().HasQueryFilter(e => e.TenantId == tenantId);
+        modelBuilder.Entity<InventoryAdjustment>().HasQueryFilter(e => e.TenantId == tenantId);
 
         // ── Tenant ──
         modelBuilder.Entity<Tenant>(entity =>
@@ -95,6 +99,7 @@ public class OrderPulseDbContext : DbContext
             entity.HasKey(e => e.OrderLineId);
             entity.HasIndex(e => new { e.OrderId, e.LineNumber }).IsUnique();
             entity.Property(e => e.Status).HasConversion<string>().HasMaxLength(50);
+            entity.Property(e => e.ItemCategory).HasConversion<string>().HasMaxLength(20);
             entity.Property(e => e.UnitPrice).HasColumnType("decimal(10,2)");
             entity.Property(e => e.LineTotal).HasColumnType("decimal(10,2)");
             entity.HasOne(e => e.Order).WithMany(o => o.Lines).HasForeignKey(e => e.OrderId).OnDelete(DeleteBehavior.Cascade);
@@ -169,6 +174,31 @@ public class OrderPulseDbContext : DbContext
             entity.HasIndex(e => new { e.TenantId, e.EventDate });
             entity.HasOne(e => e.Order).WithMany(o => o.Events).HasForeignKey(e => e.OrderId);
             entity.HasOne(e => e.EmailMessage).WithMany().HasForeignKey(e => e.EmailMessageId).OnDelete(DeleteBehavior.NoAction);
+        });
+
+        // ── InventoryItem ──
+        modelBuilder.Entity<InventoryItem>(entity =>
+        {
+            entity.HasKey(e => e.InventoryItemId);
+            entity.HasIndex(e => e.TenantId);
+            entity.HasIndex(e => e.OrderLineId);
+            entity.HasIndex(e => new { e.TenantId, e.ItemCategory });
+            entity.Property(e => e.ItemCategory).HasConversion<string>().HasMaxLength(20);
+            entity.Property(e => e.UnitStatus).HasConversion<string>().HasMaxLength(50);
+            entity.Property(e => e.Condition).HasConversion<string>().HasMaxLength(50);
+            entity.HasOne(e => e.Tenant).WithMany().HasForeignKey(e => e.TenantId);
+            entity.HasOne(e => e.Order).WithMany().HasForeignKey(e => e.OrderId).OnDelete(DeleteBehavior.NoAction);
+            entity.HasOne(e => e.OrderLine).WithOne(ol => ol.InventoryItem).HasForeignKey<InventoryItem>(e => e.OrderLineId).OnDelete(DeleteBehavior.NoAction);
+        });
+
+        // ── InventoryAdjustment ──
+        modelBuilder.Entity<InventoryAdjustment>(entity =>
+        {
+            entity.HasKey(e => e.AdjustmentId);
+            entity.HasIndex(e => e.InventoryItemId);
+            entity.HasIndex(e => e.TenantId);
+            entity.HasOne(e => e.InventoryItem).WithMany(i => i.Adjustments).HasForeignKey(e => e.InventoryItemId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.Tenant).WithMany().HasForeignKey(e => e.TenantId);
         });
     }
 }

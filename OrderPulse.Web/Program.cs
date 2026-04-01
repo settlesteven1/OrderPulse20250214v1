@@ -36,5 +36,6 @@ builder.Services.AddScoped<OrderService>();
 builder.Services.AddScoped<ReturnService>();
 builder.Services.AddScoped<ReviewService>();
 builder.Services.AddScoped<SettingsService>();
+builder.Services.AddScoped<InventoryService>();
 
 await builder.Build().RunAsync();

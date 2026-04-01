@@ -62,6 +62,7 @@ builder.Services.AddScoped<RetailerMatcher>();
 builder.Services.AddScoped<OrderStateMachine>();
 builder.Services.AddScoped<EmailBlobStorageService>();
 builder.Services.AddScoped<ProcessingLogger>();
+builder.Services.AddScoped<InventoryService>();
 builder.Services.AddScoped<IEmailProcessingOrchestrator, EmailProcessingOrchestrator>();
 
 // ── API ──

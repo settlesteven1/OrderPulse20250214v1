@@ -65,3 +65,26 @@ public enum MailboxProvider
     Gmail,
     Other
 }
+
+public enum ItemCategory
+{
+    Durable,
+    Consumable
+}
+
+public enum InventoryUnitStatus
+{
+    Owned,
+    Returned,
+    Disposed,
+    Lost,
+    Damaged
+}
+
+public enum ItemCondition
+{
+    New,
+    Good,
+    Fair,
+    Poor
+}

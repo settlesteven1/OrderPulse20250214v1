@@ -19,7 +19,7 @@ public class ReturnService
 
         var url = $"api/returns?{string.Join("&", queryParams)}";
         var response = await _http.GetFromJsonAsync<ApiResponse<List<ReturnCardDto>>>(url);
-        return (response?.Data ?? new(), response?.Pagination);
+        return (response?.Data ?? new(), response?.Meta);
     }
 
     public async Task<List<ReturnCardDto>> GetOpenLabelsAsync()

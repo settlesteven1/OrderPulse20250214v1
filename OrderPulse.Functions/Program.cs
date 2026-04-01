@@ -57,6 +57,7 @@ var host = new HostBuilder()
         services.AddScoped<RetailerMatcher>();
         services.AddScoped<OrderStateMachine>();
         services.AddSingleton<ProcessingLogger>();
+        services.AddScoped<InventoryService>();
         services.AddScoped<IEmailProcessingOrchestrator, EmailProcessingOrchestrator>();
     })
     .ConfigureLogging(logging =>
