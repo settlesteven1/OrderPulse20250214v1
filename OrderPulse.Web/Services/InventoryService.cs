@@ -42,6 +42,13 @@ public class InventoryService
         return response.IsSuccessStatusCode;
     }
 
+    public async Task<bool> UpdateCategoryAsync(Guid id, string category)
+    {
+        var request = new { Category = category };
+        var response = await _http.PutAsJsonAsync($"api/inventory/{id}/category", request);
+        return response.IsSuccessStatusCode;
+    }
+
     public async Task<List<InventoryAdjustmentModel>> GetAdjustmentsAsync(Guid id)
     {
         var response = await _http.GetFromJsonAsync<ApiResponse<List<InventoryAdjustmentModel>>>(
