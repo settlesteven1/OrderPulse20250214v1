@@ -124,6 +124,85 @@
     }
 </div>
 
+<!-- Detail Modal -->
+@if (_showDetailModal && _detailItem is not null)
+{
+    <div style="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:1000;"
+         @onclick="CloseDetailModal">
+        <div style="background:#1e293b;border-radius:12px;padding:2rem;width:600px;max-width:90vw;max-height:80vh;overflow-y:auto;" @onclick:stopPropagation="true">
+            <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:1.5rem;">
+                <div>
+                    <h3 style="font-size:1.1rem;font-weight:700;color:#e2e8f0;margin-bottom:0.25rem;">
+                        @_detailItem.ProductName
+                    </h3>
+                    <div style="color:#94a3b8;font-size:0.85rem;">
+                        @_detailItem.ItemCategory &bull; Qty: @_detailItem.QuantityOnHand
+                        @if (_detailItem.ExternalOrderNumber is not null)
+                        {
+                            <span> &bull; Order: @_detailItem.ExternalOrderNumber</span>
+                        }
+                    </div>
+                </div>
+                <button style="background:none;border:none;color:#94a3b8;cursor:pointer;font-size:1.2rem;padding:0.25rem;"
+                        @onclick="CloseDetailModal">&times;</button>
+            </div>
+
+            <h4 style="font-size:0.9rem;font-weight:600;color:#e2e8f0;margin-bottom:0.75rem;">Related Orders</h4>
+
+            @if (_loadingRelated)
+            {
+                <div style="padding:1rem;text-align:center;color:#94a3b8;">Loading related orders...</div>
+            }
+            else if (_relatedOrders.Count == 0)
+            {
+                <div style="padding:1rem;text-align:center;color:#94a3b8;">No related orders found.</div>
+            }
+            else
+            {
+                @foreach (var order in _relatedOrders)
+                {
+                    <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:1rem;margin-bottom:0.75rem;cursor:pointer;"
+                         @onclick="@(() => NavigateToOrder(order.OrderId))">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
+                            <div>
+                                <span style="color:#e2e8f0;font-weight:600;">@order.ExternalOrderNumber</span>
+                                @if (order.RetailerName is not null)
+                                {
+                                    <span style="color:#94a3b8;margin-left:0.5rem;font-size:0.85rem;">@order.RetailerName</span>
+                                }
+                            </div>
+                            <span style="padding:0.15rem 0.5rem;border-radius:10px;font-size:0.75rem;font-weight:600;background:#334155;color:#94a3b8;">
+                                @order.Status
+                            </span>
+                        </div>
+                        <div style="color:#94a3b8;font-size:0.8rem;margin-bottom:0.5rem;">
+                            @order.OrderDate.ToString("MMM d, yyyy")
+                            @if (order.TotalAmount.HasValue)
+                            {
+                                <span> &bull; @($"${order.TotalAmount:N2}") @order.Currency</span>
+                            }
+                        </div>
+                        @foreach (var line in order.MatchingLines)
+                        {
+                            <div style="color:#94a3b8;font-size:0.8rem;padding-left:0.5rem;border-left:2px solid #334155;margin-top:0.25rem;">
+                                @line.ProductName &times; @line.Quantity
+                                @if (line.UnitPrice.HasValue)
+                                {
+                                    <span style="margin-left:0.5rem;">@@ @($"${line.UnitPrice:N2}")</span>
+                                }
+                                @if (line.LineTotal.HasValue)
+                                {
+                                    <span style="margin-left:0.5rem;color:#e2e8f0;">= @($"${line.LineTotal:N2}")</span>
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+            }
+        </div>
+    </div>
+}
+
 <!-- Adjust Modal -->
 @if (_showAdjustModal && _selectedItem is not null)
 {
@@ -200,6 +279,12 @@
     // Counts for badges
     private int _consumableCount;
     private int _durableCount;
+
+    // Detail modal
+    private bool _showDetailModal;
+    private InventoryItemModel? _detailItem;
+    private List<RelatedOrderModel> _relatedOrders = new();
+    private bool _loadingRelated;
 
     // Adjust modal
     private bool _showAdjustModal;
@@ -294,9 +379,38 @@
         }
     }
 
-    private void SelectItem(InventoryItemModel item)
+    private async Task SelectItem(InventoryItemModel item)
     {
-        // Could navigate to a detail view in the future
+        _detailItem = item;
+        _relatedOrders = new();
+        _loadingRelated = true;
+        _showDetailModal = true;
+        StateHasChanged();
+
+        try
+        {
+            _relatedOrders = await InventorySvc.GetRelatedOrdersAsync(item.InventoryItemId);
+        }
+        catch
+        {
+            _relatedOrders = new();
+        }
+        finally
+        {
+            _loadingRelated = false;
+            StateHasChanged();
+        }
+    }
+
+    private void CloseDetailModal()
+    {
+        _showDetailModal = false;
+        _detailItem = null;
+    }
+
+    private void NavigateToOrder(Guid orderId)
+    {
+        Navigation.NavigateTo($"/orders/{orderId}");
     }
 
     private void OpenAdjustModal(InventoryItemModel item)
