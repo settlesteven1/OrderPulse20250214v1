@@ -68,12 +68,15 @@
                             @(item.ExternalOrderNumber ?? "—")
                         </td>
                         <td style="padding:0.75rem 1rem;">
-                            <span style="padding:0.2rem 0.6rem;border-radius:12px;font-size:0.75rem;font-weight:600;
+                            <button style="padding:0.2rem 0.6rem;border-radius:12px;font-size:0.75rem;font-weight:600;border:none;cursor:pointer;
                                 @(item.ItemCategory == "Durable"
                                     ? "background:#312e81;color:#a5b4fc;"
-                                    : "background:#064e3b;color:#6ee7b7;")">
-                                @item.ItemCategory
-                            </span>
+                                    : "background:#064e3b;color:#6ee7b7;")"
+                                    title="Click to change category"
+                                    @onclick:stopPropagation="true"
+                                    @onclick="@(() => ToggleCategory(item))">
+                                @item.ItemCategory &#x21C4;
+                            </button>
                         </td>
                         @if (_activeCategory == "Durable")
                         {
@@ -343,6 +346,30 @@
         finally
         {
             _adjusting = false;
+        }
+    }
+
+    private async Task ToggleCategory(InventoryItemModel item)
+    {
+        var newCategory = item.ItemCategory == "Durable" ? "Consumable" : "Durable";
+        try
+        {
+            var success = await InventorySvc.UpdateCategoryAsync(item.InventoryItemId, newCategory);
+            if (success)
+            {
+                item.ItemCategory = newCategory;
+                if (newCategory == "Consumable")
+                {
+                    item.UnitStatus = null;
+                    item.Condition = null;
+                }
+                await LoadCountsAsync();
+                StateHasChanged();
+            }
+        }
+        catch
+        {
+            // Silently fail — item stays as-is
         }
     }
 

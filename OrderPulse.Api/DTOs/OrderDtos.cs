@@ -289,6 +289,10 @@ public record AdjustInventoryRequest(
     string? Notes
 );
 
+public record UpdateInventoryCategoryRequest(
+    string Category
+);
+
 public record UpdateInventoryStatusRequest(
     string? UnitStatus,
     string? Condition
