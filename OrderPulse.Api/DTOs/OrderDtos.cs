@@ -297,3 +297,6 @@ public record UpdateInventoryStatusRequest(
     string? UnitStatus,
     string? Condition
 );
+
+public record RelatedOrderDto(Guid OrderId, string ExternalOrderNumber, DateTime OrderDate, string Status, decimal? TotalAmount, string? Currency, string? RetailerName, IReadOnlyList<RelatedOrderLineDto> MatchingLines);
+public record RelatedOrderLineDto(string ProductName, int Quantity, decimal? UnitPrice, decimal? LineTotal);

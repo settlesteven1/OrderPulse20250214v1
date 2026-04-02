@@ -42,6 +42,7 @@ public class OrderRepository : IOrderRepository
         var q = _db.Orders
             .Include(o => o.Retailer)
             .Include(o => o.Lines)
+            .Include(o => o.Events)
             .AsQueryable();
 
         // Filter by status
@@ -69,6 +70,15 @@ public class OrderRepository : IOrderRepository
                     o.Status == OrderStatus.Delivered ||
                     o.Status == OrderStatus.Closed ||
                     o.Status == OrderStatus.Refunded),
+                "open-returns" => q.Where(o =>
+                    o.Status == OrderStatus.ReturnInProgress),
+                "awaiting-refund" => q.Where(o =>
+                    o.Status == OrderStatus.ReturnReceived ||
+                    o.Returns.Any(r => r.Status == ReturnStatus.Received)),
+                "recently-delivered" => q.Where(o =>
+                    o.Status == OrderStatus.Delivered &&
+                    o.Events.Any(e => e.EventType == "DeliveryConfirmation" &&
+                        e.EventDate >= DateTime.UtcNow.AddDays(-14))),
                 "cancelled" => q.Where(o =>
                     o.Status == OrderStatus.Cancelled ||
                     o.Status == OrderStatus.PartiallyCancelled),

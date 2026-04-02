@@ -49,6 +49,12 @@ public class InventoryService
         return response.IsSuccessStatusCode;
     }
 
+    public async Task<List<RelatedOrderModel>> GetRelatedOrdersAsync(Guid id)
+    {
+        var response = await _http.GetFromJsonAsync<ApiResponse<List<RelatedOrderModel>>>($"api/inventory/{id}/related-orders");
+        return response?.Data ?? new();
+    }
+
     public async Task<List<InventoryAdjustmentModel>> GetAdjustmentsAsync(Guid id)
     {
         var response = await _http.GetFromJsonAsync<ApiResponse<List<InventoryAdjustmentModel>>>(

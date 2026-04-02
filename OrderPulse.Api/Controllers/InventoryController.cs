@@ -236,6 +236,24 @@ public class InventoryController : ControllerBase
     }
 
     /// <summary>
+    /// Get orders containing the same product as this inventory item.
+    /// </summary>
+    [HttpGet("{id:guid}/related-orders")]
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<RelatedOrderDto>>>> GetRelatedOrders(Guid id, CancellationToken ct)
+    {
+        var item = await _db.InventoryItems.FindAsync(new object[] { id }, ct);
+        if (item is null) return NotFound(new ApiError("NOT_FOUND", "Inventory item not found"));
+        var productName = item.ProductName;
+        var orders = await _db.Orders.Include(o => o.Retailer).Include(o => o.Lines)
+            .Where(o => o.Lines.Any(l => l.ProductName == productName))
+            .OrderByDescending(o => o.OrderDate)
+            .Select(o => new RelatedOrderDto(o.OrderId, o.ExternalOrderNumber, o.OrderDate, o.Status.ToString(), o.TotalAmount, o.Currency, o.Retailer != null ? o.Retailer.Name : null,
+                o.Lines.Where(l => l.ProductName == productName).Select(l => new RelatedOrderLineDto(l.ProductName, l.Quantity, l.UnitPrice, l.LineTotal)).ToList()))
+            .ToListAsync(ct);
+        return Ok(new ApiResponse<IReadOnlyList<RelatedOrderDto>>(orders));
+    }
+
+    /// <summary>
     /// Update durable item status/condition.
     /// </summary>
     [HttpPut("{id:guid}/status")]

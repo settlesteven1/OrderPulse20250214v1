@@ -36,14 +36,25 @@ public class OrderListItem
 {
     public Guid OrderId { get; set; }
     public string ExternalOrderNumber { get; set; } = string.Empty;
-    public string? RetailerName { get; set; }
     public DateTime OrderDate { get; set; }
     public string Status { get; set; } = string.Empty;
     public decimal? TotalAmount { get; set; }
-    public string Currency { get; set; } = "USD";
+    public string? Currency { get; set; } = "USD";
     public int ItemCount { get; set; }
-    public string? FirstItemName { get; set; }
-    public DateOnly? EstimatedDeliveryEnd { get; set; }
+    public string? ItemsPreview { get; set; }
+    public RetailerSummary? Retailer { get; set; }
+    public string? LastEvent { get; set; }
+    public DateTime? LastEventDate { get; set; }
+    public string? RetailerName => Retailer?.Name;
+    public string? FirstItemName => ItemsPreview;
+}
+
+public class RetailerSummary
+{
+    public Guid RetailerId { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string? LogoUrl { get; set; }
+    public int? ReturnPolicyDays { get; set; }
 }
 
 public class OrderDetailModel
@@ -136,6 +147,26 @@ public class InventoryItemModel
 public class InventoryItemDetailModel : InventoryItemModel
 {
     public List<InventoryAdjustmentModel> RecentAdjustments { get; set; } = new();
+}
+
+public class RelatedOrderModel
+{
+    public Guid OrderId { get; set; }
+    public string ExternalOrderNumber { get; set; } = string.Empty;
+    public DateTime OrderDate { get; set; }
+    public string Status { get; set; } = string.Empty;
+    public decimal? TotalAmount { get; set; }
+    public string? Currency { get; set; }
+    public string? RetailerName { get; set; }
+    public List<RelatedOrderLineModel> MatchingLines { get; set; } = new();
+}
+
+public class RelatedOrderLineModel
+{
+    public string ProductName { get; set; } = string.Empty;
+    public int Quantity { get; set; }
+    public decimal? UnitPrice { get; set; }
+    public decimal? LineTotal { get; set; }
 }
 
 public class InventoryAdjustmentModel

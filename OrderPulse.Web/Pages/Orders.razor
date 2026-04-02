@@ -22,8 +22,10 @@
         <input type="text" placeholder="Search orders..." @bind="_search" @bind:event="oninput"
                @onkeyup="HandleSearchKeyUp" />
     </div>
+    <button style="padding:0.3rem 0.8rem;border:1px solid var(--border);border-radius:6px;background:var(--bg-surface, #f8f9fa);cursor:pointer;font-size:0.8rem;margin-left:0.5rem;white-space:nowrap;"
+            @onclick="ExecuteSearch">Search</button>
     <select style="padding:0.5rem 1rem;border:1px solid var(--border);border-radius:8px;font-size:0.875rem;"
-            @bind="_sortBy">
+            @bind="_sortBy" @bind:after="OnSortChanged">
         <option value="OrderDate">Date</option>
         <option value="TotalAmount">Amount</option>
         <option value="Status">Status</option>
@@ -185,8 +187,11 @@
     private string ActiveChipClass(string? shortcut) =>
         _activeShortcut == shortcut ? "active" : "";
 
-    private static string FormatCurrency(decimal? amount, string currency) =>
+    private static string FormatCurrency(decimal? amount, string? currency) =>
         amount.HasValue ? $"${amount:N2}" : "--";
+
+    private async Task ExecuteSearch() { _page = 1; await LoadOrdersAsync(); }
+    private async Task OnSortChanged() { _page = 1; await LoadOrdersAsync(); }
 
     private static string Truncate(string text, int max) =>
         text.Length <= max ? text : text[..max] + "...";

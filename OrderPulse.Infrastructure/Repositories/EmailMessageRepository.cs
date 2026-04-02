@@ -34,7 +34,8 @@ public class EmailMessageRepository : IEmailMessageRepository
         int page, int pageSize, CancellationToken ct = default)
     {
         var q = _db.EmailMessages
-            .Where(e => e.ProcessingStatus == ProcessingStatus.ManualReview);
+            .Where(e => e.ProcessingStatus == ProcessingStatus.ManualReview
+                     || e.ProcessingStatus == ProcessingStatus.Failed);
 
         var totalCount = await q.CountAsync(ct);
 
