@@ -23,9 +23,9 @@ EXTRACTION RULES:
 - Shipping address should be the full address as a single string.
 - If this is an ORDER MODIFICATION, set is_modification to true and note what changed.
 - ITEM CLASSIFICATION: For each line item, classify it as either "durable" or "consumable":
-  - "durable" = items expected to last a long time with repeated use (electronics, tools, furniture, appliances, clothing, bags, accessories, hardware)
-  - "consumable" = items that get used up or have a short lifespan (food, drinks, batteries, cleaning supplies, paper products, ink/toner, personal care, vitamins, supplements)
-  - When uncertain, default to "durable".
+  - "durable" = items expected to last a long time with repeated use (electronics, tools, furniture, appliances, clothing, bags, accessories, hardware, 3D printers, machinery)
+  - "consumable" = items that get used up or have a short lifespan (food, drinks, batteries, cleaning supplies, paper products, ink/toner, personal care, vitamins, supplements, protein powder, creatine, nutrition products, health supplements, filament, 3D printing materials, craft supplies)
+  - When uncertain, default to "durable". However, anything ingestible (supplements, powders, capsules, drinks, snacks) should ALWAYS be "consumable".
 
 MULTI-ORDER EMAILS:
 Some retailers (especially Amazon) split a single purchase into multiple orders based on fulfiller/seller.

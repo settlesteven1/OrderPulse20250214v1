@@ -194,6 +194,48 @@ public class InventoryController : ControllerBase
     }
 
     /// <summary>
+    /// Update item category (toggle between Durable and Consumable).
+    /// </summary>
+    [HttpPut("{id:guid}/category")]
+    public async Task<ActionResult> UpdateCategory(
+        Guid id,
+        [FromBody] UpdateInventoryCategoryRequest request,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.Category) ||
+            !Enum.TryParse<ItemCategory>(request.Category, ignoreCase: true, out var newCategory))
+        {
+            return BadRequest(new ApiError("INVALID_CATEGORY", "Category must be 'Durable' or 'Consumable'"));
+        }
+
+        var item = await _db.InventoryItems.FindAsync(new object[] { id }, ct);
+        if (item is null) return NotFound(new ApiError("NOT_FOUND", "Inventory item not found"));
+
+        if (item.ItemCategory == newCategory)
+            return Ok(new { status = "unchanged", category = newCategory.ToString() });
+
+        item.ItemCategory = newCategory;
+
+        // Clear durable-specific fields when switching to consumable
+        if (newCategory == ItemCategory.Consumable)
+        {
+            item.UnitStatus = null;
+            item.Condition = null;
+        }
+        // Set durable defaults when switching to durable
+        else
+        {
+            item.UnitStatus ??= InventoryUnitStatus.Owned;
+            item.Condition ??= ItemCondition.New;
+        }
+
+        item.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+
+        return Ok(new { status = "updated", category = newCategory.ToString() });
+    }
+
+    /// <summary>
     /// Update durable item status/condition.
     /// </summary>
     [HttpPut("{id:guid}/status")]

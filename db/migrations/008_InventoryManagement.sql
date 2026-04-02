@@ -84,15 +84,15 @@ GO
 
 -- InventoryItems
 CREATE SECURITY POLICY [dbo].[InventoryItemsFilter]
-    ADD FILTER PREDICATE [dbo].[fn_tenantAccessPredicate]([TenantId]) ON [dbo].[InventoryItems],
-    ADD BLOCK  PREDICATE [dbo].[fn_tenantAccessPredicate]([TenantId]) ON [dbo].[InventoryItems]
+    ADD FILTER PREDICATE [Security].[fn_TenantAccessPredicate]([TenantId]) ON [dbo].[InventoryItems],
+    ADD BLOCK  PREDICATE [Security].[fn_TenantAccessPredicate]([TenantId]) ON [dbo].[InventoryItems]
     WITH (STATE = ON);
 GO
 
 -- InventoryAdjustments
 CREATE SECURITY POLICY [dbo].[InventoryAdjustmentsFilter]
-    ADD FILTER PREDICATE [dbo].[fn_tenantAccessPredicate]([TenantId]) ON [dbo].[InventoryAdjustments],
-    ADD BLOCK  PREDICATE [dbo].[fn_tenantAccessPredicate]([TenantId]) ON [dbo].[InventoryAdjustments]
+    ADD FILTER PREDICATE [Security].[fn_TenantAccessPredicate]([TenantId]) ON [dbo].[InventoryAdjustments],
+    ADD BLOCK  PREDICATE [Security].[fn_TenantAccessPredicate]([TenantId]) ON [dbo].[InventoryAdjustments]
     WITH (STATE = ON);
 GO
 
