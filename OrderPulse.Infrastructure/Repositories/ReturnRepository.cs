@@ -58,7 +58,7 @@ public class ReturnRepository : IReturnRepository
         return await _db.Returns
             .Include(r => r.Order).ThenInclude(o => o.Retailer)
             .Include(r => r.Lines).ThenInclude(l => l.OrderLine)
-            .Where(r => r.Status == ReturnStatus.LabelIssued && r.ReturnByDate != null)
+            .Where(r => r.Status == ReturnStatus.Initiated || (r.Status == ReturnStatus.LabelIssued && r.ReturnByDate != null))
             .OrderBy(r => r.ReturnByDate)
             .ToListAsync(ct);
     }
