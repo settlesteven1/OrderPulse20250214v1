@@ -102,6 +102,10 @@ else
                                 <div class="qr-placeholder">
                                     <div style="font-size:2rem;">&#x1F4F1;</div>
                                     <div class="text-xs">QR code in email</div>
+                                    <button class="refresh-qr-btn" @onclick="() => RefreshQrCode(ret)"
+                                            disabled="@_refreshingQr">
+                                        @(_refreshingQr && _refreshingReturnId == ret.ReturnId ? "Loading..." : "Load QR Code")
+                                    </button>
                                 </div>
                             }
                         }
@@ -292,6 +296,19 @@ else
         text-align: center;
         margin-bottom: 0.5rem;
     }
+    .refresh-qr-btn {
+        margin-top: 0.5rem;
+        padding: 0.35rem 0.75rem;
+        background: var(--blue);
+        color: white;
+        border: none;
+        border-radius: 6px;
+        font-size: 0.75rem;
+        font-weight: 500;
+        cursor: pointer;
+    }
+    .refresh-qr-btn:hover { opacity: 0.9; }
+    .refresh-qr-btn:disabled { opacity: 0.5; cursor: not-allowed; }
     .qr-code-container {
         display: flex;
         flex-direction: column;
@@ -380,6 +397,8 @@ else
     private int _needToShipCount = 0;
     private bool _showQrModal = false;
     private ReturnCardDto? _selectedQrReturn;
+    private bool _refreshingQr = false;
+    private Guid? _refreshingReturnId;
 
     protected override async Task OnInitializedAsync()
     {
@@ -485,5 +504,31 @@ else
     {
         _showQrModal = false;
         _selectedQrReturn = null;
+    }
+
+    /// <summary>
+    /// Re-extract QR code from the source email's raw HTML for returns with placeholder data.
+    /// </summary>
+    private async Task RefreshQrCode(ReturnCardDto ret)
+    {
+        _refreshingQr = true;
+        _refreshingReturnId = ret.ReturnId;
+        StateHasChanged();
+
+        try
+        {
+            var updated = await ReturnSvc.RefreshQrCodeAsync(ret.ReturnId);
+            if (updated?.QRCodeData is not null)
+            {
+                ret.QRCodeData = updated.QRCodeData;
+            }
+        }
+        catch { /* silently fail — placeholder remains */ }
+        finally
+        {
+            _refreshingQr = false;
+            _refreshingReturnId = null;
+            StateHasChanged();
+        }
     }
 }

@@ -56,6 +56,18 @@ public static partial class ForwardedEmailHelper
         RegexOptions.IgnoreCase)]
     private static partial Regex ImgSrcAttribute();
 
+    // Matches <img> tags whose src URL contains QR-related path segments (e.g. Amazon CDN QR codes)
+    [GeneratedRegex(
+        @"<img\s[^>]*src\s*=\s*[""'][^""']*(?:qr|barcode|qrcode)[^""']*[""'][^>]*/?\s*>",
+        RegexOptions.IgnoreCase)]
+    private static partial Regex QrCodeImageBySrcUrl();
+
+    // Matches <a> or <img> tags near QR-related text context (within a table cell or div)
+    [GeneratedRegex(
+        @"<(?:td|div|span)[^>]*>[\s\S]{0,200}?(?:qr\s*code|scan\s*(?:this|the|your|at))[\s\S]{0,500}?<img\s[^>]*src\s*=\s*[""']([^""']+)[""'][^>]*/?\s*>",
+        RegexOptions.IgnoreCase)]
+    private static partial Regex QrCodeImageByProximity();
+
     // ── HTML removal patterns ──
 
     [GeneratedRegex(@"<style[^>]*>[\s\S]*?</style>", RegexOptions.IgnoreCase)]
@@ -234,21 +246,21 @@ public static partial class ForwardedEmailHelper
     /// <summary>
     /// Extracts QR code image data from raw email HTML.
     ///
-    /// Strategy:
+    /// Strategy (ordered by confidence):
     /// 1. Look for &lt;img&gt; tags with QR-related alt/title/class/id attributes
-    /// 2. If those have a base64 data URI src, return the data URI directly
-    /// 3. If those have a remote URL src, return the URL
-    /// 4. Fall back to scanning all base64 &lt;img&gt; tags for square-ish images
-    ///    (QR codes are typically small, square images)
+    /// 2. Look for &lt;img&gt; tags whose src URL contains "qr" or "barcode" (Amazon CDN, etc.)
+    /// 3. Look for &lt;img&gt; tags near QR-related text ("QR code", "Scan this", etc.)
+    /// 4. Scan base64 data URI images for QR-sized images with contextual hints
+    /// 5. Fall back to medium-sized base64 images in the QR size range
     ///
-    /// Returns a data URI (data:image/png;base64,...) or image URL, or null if no QR found.
+    /// Returns a data URI (data:image/png;base64,...), image URL, or null if no QR found.
     /// </summary>
     public static string? ExtractQrCodeImageData(string rawHtml)
     {
         if (string.IsNullOrWhiteSpace(rawHtml))
             return null;
 
-        // Strategy 1: Look for <img> tags with QR-related attributes
+        // Strategy 1: <img> tags with QR-related alt/title/class/id attributes
         var qrImgMatches = QrCodeImageByAttribute().Matches(rawHtml);
         foreach (Match qrImg in qrImgMatches)
         {
@@ -256,44 +268,50 @@ public static partial class ForwardedEmailHelper
             if (srcMatch.Success)
             {
                 var src = srcMatch.Groups[1].Value.Trim();
-
-                // Skip tracking pixels (1x1 images, spacer.gif, etc.)
-                if (IsTrackingPixel(qrImg.Value))
-                    continue;
-
-                return src;
+                if (!IsTrackingPixel(qrImg.Value))
+                    return src;
             }
         }
 
-        // Strategy 2: Look for base64 data URI images that could be QR codes
-        // QR codes are typically square PNG/GIF images, often between 1KB-20KB of base64
+        // Strategy 2: <img> tags whose src URL contains "qr" or "barcode" (e.g. Amazon CDN)
+        var qrSrcMatches = QrCodeImageBySrcUrl().Matches(rawHtml);
+        foreach (Match qrSrc in qrSrcMatches)
+        {
+            var srcMatch = ImgSrcAttribute().Match(qrSrc.Value);
+            if (srcMatch.Success)
+            {
+                var src = srcMatch.Groups[1].Value.Trim();
+                if (!IsTrackingPixel(qrSrc.Value))
+                    return src;
+            }
+        }
+
+        // Strategy 3: <img> tags near QR-related text context ("QR code", "Scan at", etc.)
+        var proximityMatches = QrCodeImageByProximity().Matches(rawHtml);
+        foreach (Match proxMatch in proximityMatches)
+        {
+            var src = proxMatch.Groups[1].Value.Trim();
+            if (!string.IsNullOrEmpty(src))
+                return src;
+        }
+
+        // Strategy 4: Base64 data URI images with QR-related context
         var base64Matches = Base64ImageTags().Matches(rawHtml);
         foreach (Match b64Img in base64Matches)
         {
             var dataUri = b64Img.Groups[1].Value.Trim();
-
-            // Skip tiny images (tracking pixels) — base64 data under 200 chars is ~150 bytes
-            if (dataUri.Length < 200)
+            if (dataUri.Length < 200 || dataUri.Length > 30_000)
                 continue;
 
-            // Skip very large images (photos, banners) — QR codes are typically under 20KB
-            // 20KB of binary = ~27K chars in base64
-            if (dataUri.Length > 30_000)
-                continue;
-
-            // If the surrounding tag has QR-related context, prefer it
             var fullTag = b64Img.Value.ToLowerInvariant();
             if (fullTag.Contains("qr") || fullTag.Contains("barcode") || fullTag.Contains("scan"))
                 return dataUri;
         }
 
-        // Strategy 3: If we found any medium-sized base64 images (potential QR codes),
-        // return the first one that's in a plausible size range for QR codes
+        // Strategy 5: Medium-sized base64 images in the QR size range
         foreach (Match b64Img in base64Matches)
         {
             var dataUri = b64Img.Groups[1].Value.Trim();
-
-            // QR code sweet spot: 500 chars (~375 bytes) to 15K chars (~11KB)
             if (dataUri.Length >= 500 && dataUri.Length <= 15_000)
                 return dataUri;
         }
