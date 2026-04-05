@@ -55,4 +55,11 @@ public class InventoryService
             $"api/inventory/{id}/adjustments");
         return response?.Data ?? new();
     }
+
+    public async Task<List<RelatedOrderModel>> GetRelatedOrdersAsync(Guid inventoryItemId)
+    {
+        var response = await _http.GetFromJsonAsync<ApiResponse<List<RelatedOrderModel>>>(
+            $"api/inventory/{inventoryItemId}/related-orders");
+        return response?.Data ?? new();
+    }
 }
