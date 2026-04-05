@@ -37,6 +37,25 @@ public static partial class ForwardedEmailHelper
         RegexOptions.IgnoreCase)]
     private static partial Regex ForwardMetadataBlock();
 
+    // ── QR code extraction patterns ──
+    // Matches <img> tags whose src contains a base64 data URI (any image type)
+    [GeneratedRegex(
+        @"<img\s[^>]*src\s*=\s*[""'](data:image/[^;]+;base64,[A-Za-z0-9+/=\s]+)[""'][^>]*/?\s*>",
+        RegexOptions.IgnoreCase | RegexOptions.Singleline)]
+    private static partial Regex Base64ImageTags();
+
+    // Matches <img> tags that look like QR codes based on alt, title, class, or id attributes
+    [GeneratedRegex(
+        @"<img\s[^>]*(?:alt|title|class|id)\s*=\s*[""'][^""']*(?:qr|barcode|scan)[^""']*[""'][^>]*>",
+        RegexOptions.IgnoreCase)]
+    private static partial Regex QrCodeImageByAttribute();
+
+    // Extracts the src attribute value from an <img> tag
+    [GeneratedRegex(
+        @"src\s*=\s*[""']([^""']+)[""']",
+        RegexOptions.IgnoreCase)]
+    private static partial Regex ImgSrcAttribute();
+
     // ── HTML removal patterns ──
 
     [GeneratedRegex(@"<style[^>]*>[\s\S]*?</style>", RegexOptions.IgnoreCase)]
@@ -210,5 +229,83 @@ public static partial class ForwardedEmailHelper
         afterMarker = ForwardMetadataBlock().Replace(afterMarker, "", 1);
 
         return afterMarker.TrimStart('\r', '\n', ' ');
+    }
+
+    /// <summary>
+    /// Extracts QR code image data from raw email HTML.
+    ///
+    /// Strategy:
+    /// 1. Look for &lt;img&gt; tags with QR-related alt/title/class/id attributes
+    /// 2. If those have a base64 data URI src, return the data URI directly
+    /// 3. If those have a remote URL src, return the URL
+    /// 4. Fall back to scanning all base64 &lt;img&gt; tags for square-ish images
+    ///    (QR codes are typically small, square images)
+    ///
+    /// Returns a data URI (data:image/png;base64,...) or image URL, or null if no QR found.
+    /// </summary>
+    public static string? ExtractQrCodeImageData(string rawHtml)
+    {
+        if (string.IsNullOrWhiteSpace(rawHtml))
+            return null;
+
+        // Strategy 1: Look for <img> tags with QR-related attributes
+        var qrImgMatches = QrCodeImageByAttribute().Matches(rawHtml);
+        foreach (Match qrImg in qrImgMatches)
+        {
+            var srcMatch = ImgSrcAttribute().Match(qrImg.Value);
+            if (srcMatch.Success)
+            {
+                var src = srcMatch.Groups[1].Value.Trim();
+
+                // Skip tracking pixels (1x1 images, spacer.gif, etc.)
+                if (IsTrackingPixel(qrImg.Value))
+                    continue;
+
+                return src;
+            }
+        }
+
+        // Strategy 2: Look for base64 data URI images that could be QR codes
+        // QR codes are typically square PNG/GIF images, often between 1KB-20KB of base64
+        var base64Matches = Base64ImageTags().Matches(rawHtml);
+        foreach (Match b64Img in base64Matches)
+        {
+            var dataUri = b64Img.Groups[1].Value.Trim();
+
+            // Skip tiny images (tracking pixels) — base64 data under 200 chars is ~150 bytes
+            if (dataUri.Length < 200)
+                continue;
+
+            // Skip very large images (photos, banners) — QR codes are typically under 20KB
+            // 20KB of binary = ~27K chars in base64
+            if (dataUri.Length > 30_000)
+                continue;
+
+            // If the surrounding tag has QR-related context, prefer it
+            var fullTag = b64Img.Value.ToLowerInvariant();
+            if (fullTag.Contains("qr") || fullTag.Contains("barcode") || fullTag.Contains("scan"))
+                return dataUri;
+        }
+
+        // Strategy 3: If we found any medium-sized base64 images (potential QR codes),
+        // return the first one that's in a plausible size range for QR codes
+        foreach (Match b64Img in base64Matches)
+        {
+            var dataUri = b64Img.Groups[1].Value.Trim();
+
+            // QR code sweet spot: 500 chars (~375 bytes) to 15K chars (~11KB)
+            if (dataUri.Length >= 500 && dataUri.Length <= 15_000)
+                return dataUri;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Checks if an img tag is likely a tracking pixel based on dimensions.
+    /// </summary>
+    private static bool IsTrackingPixel(string imgTag)
+    {
+        return TrackingPixels().IsMatch(imgTag);
     }
 }
