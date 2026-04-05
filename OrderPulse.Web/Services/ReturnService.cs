@@ -33,6 +33,17 @@ public class ReturnService
         var response = await _http.GetFromJsonAsync<ApiResponse<List<AwaitingRefundDto>>>("api/returns/awaiting-refund");
         return response?.Data ?? new();
     }
+
+    /// <summary>
+    /// Re-extract QR code image from source email for an existing return.
+    /// </summary>
+    public async Task<ReturnCardDto?> RefreshQrCodeAsync(Guid returnId)
+    {
+        var response = await _http.PostAsync($"api/returns/{returnId}/refresh-qr", null);
+        if (!response.IsSuccessStatusCode) return null;
+        var result = await response.Content.ReadFromJsonAsync<ApiResponse<ReturnCardDto>>();
+        return result?.Data;
+    }
 }
 
 public class ReturnCardDto

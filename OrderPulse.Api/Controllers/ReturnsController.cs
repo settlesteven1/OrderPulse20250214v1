@@ -1,8 +1,11 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using OrderPulse.Api.DTOs;
 using OrderPulse.Domain.Enums;
 using OrderPulse.Domain.Interfaces;
+using OrderPulse.Infrastructure.Data;
+using OrderPulse.Infrastructure.Services;
 
 namespace OrderPulse.Api.Controllers;
 
@@ -12,10 +15,17 @@ namespace OrderPulse.Api.Controllers;
 public class ReturnsController : ControllerBase
 {
     private readonly IReturnRepository _returnRepo;
+    private readonly OrderPulseDbContext _db;
+    private readonly EmailBlobStorageService _blobStorage;
 
-    public ReturnsController(IReturnRepository returnRepo)
+    public ReturnsController(
+        IReturnRepository returnRepo,
+        OrderPulseDbContext db,
+        EmailBlobStorageService blobStorage)
     {
         _returnRepo = returnRepo;
+        _db = db;
+        _blobStorage = blobStorage;
     }
 
     /// <summary>
@@ -70,6 +80,45 @@ public class ReturnsController : ControllerBase
         var items = await _returnRepo.GetAwaitingRefundAsync(ct);
         var dtos = items.Select(MapToDetailDto).ToList();
         return Ok(new ApiResponse<IReadOnlyList<ReturnDetailDto>>(dtos));
+    }
+
+    /// <summary>
+    /// Re-extract QR code image from the source email's raw HTML for an existing return.
+    /// Used to backfill returns that were processed before QR extraction was implemented.
+    /// </summary>
+    [HttpPost("{id:guid}/refresh-qr")]
+    public async Task<ActionResult<ApiResponse<ReturnDetailDto>>> RefreshQrCode(
+        Guid id, CancellationToken ct)
+    {
+        var returnEntity = await _db.Returns
+            .Include(r => r.Order).ThenInclude(o => o!.Retailer)
+            .Include(r => r.Lines).ThenInclude(l => l.OrderLine)
+            .Include(r => r.Refund)
+            .Include(r => r.SourceEmail)
+            .FirstOrDefaultAsync(r => r.ReturnId == id, ct);
+
+        if (returnEntity is null)
+            return NotFound(new ApiError("NOT_FOUND", "Return not found"));
+
+        if (returnEntity.SourceEmail?.BodyBlobUrl is null)
+            return BadRequest(new ApiError("NO_BODY", "Source email has no stored body"));
+
+        var rawHtml = await _blobStorage.GetEmailBodyAsync(returnEntity.SourceEmail.BodyBlobUrl, ct);
+        if (string.IsNullOrEmpty(rawHtml))
+            return BadRequest(new ApiError("EMPTY_BODY", "Email body is empty"));
+
+        var qrData = ForwardedEmailHelper.ExtractQrCodeImageData(rawHtml);
+        if (qrData is null)
+            return Ok(new ApiResponse<ReturnDetailDto>(MapToDetailDto(returnEntity))
+            {
+                Meta = new PaginationMeta(0, 0, 0) // signal no QR found but not an error
+            });
+
+        returnEntity.QRCodeData = qrData;
+        returnEntity.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+
+        return Ok(new ApiResponse<ReturnDetailDto>(MapToDetailDto(returnEntity)));
     }
 
     private static ReturnDetailDto MapToDetailDto(Domain.Entities.Return r) => new(
