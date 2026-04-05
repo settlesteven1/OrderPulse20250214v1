@@ -846,6 +846,29 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
 
         var parsed = result.Data.Return;
 
+        // Extract QR code image from raw HTML if the parser detected one
+        string? qrCodeImageData = null;
+        if (parsed.QrCodeInEmail && !string.IsNullOrEmpty(email.BodyBlobUrl))
+        {
+            try
+            {
+                var rawHtml = await _blobStorage.GetEmailBodyAsync(email.BodyBlobUrl, ct);
+                if (!string.IsNullOrEmpty(rawHtml))
+                {
+                    qrCodeImageData = ForwardedEmailHelper.ExtractQrCodeImageData(rawHtml);
+                    await _log.Info(email.EmailMessageId, "QRCodeExtract",
+                        qrCodeImageData is not null
+                            ? $"Extracted QR code image ({qrCodeImageData.Length} chars)"
+                            : "Parser detected QR code but image extraction found nothing");
+                }
+            }
+            catch (Exception ex)
+            {
+                await _log.Warn(email.EmailMessageId, "QRCodeExtract",
+                    $"Failed to extract QR code from HTML: {ex.Message}");
+            }
+        }
+
         // Find or create the order
         var order = await FindOrCreateOrderByReference(parsed.OrderReference, email, retailerContext, ct);
         if (order is null)
@@ -882,7 +905,7 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
             if (parsed.RejectionReason is not null)
                 returnEntity.RejectionReason = parsed.RejectionReason;
             if (parsed.QrCodeInEmail)
-                returnEntity.QRCodeData = "QR code provided in email";
+                returnEntity.QRCodeData = qrCodeImageData ?? "QR code provided in email";
             if (parsed.DropOffLocation is not null)
                 returnEntity.DropOffLocation = parsed.DropOffLocation;
             if (parsed.DropOffAddress is not null)
@@ -911,15 +934,15 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
                 RejectionReason = parsed.RejectionReason,
                 DropOffLocation = parsed.DropOffLocation,
                 DropOffAddress = parsed.DropOffAddress,
+                QRCodeData = parsed.QrCodeInEmail
+                    ? (qrCodeImageData ?? "QR code provided in email")
+                    : null,
                 SourceEmailId = email.EmailMessageId,
                 LastUpdatedEmailId = email.EmailMessageId,
                 ParsedItemsJson = result.Data.Items.Count > 0
                     ? JsonSerializer.Serialize(result.Data.Items)
                     : null
             };
-
-            if (parsed.QrCodeInEmail)
-                returnEntity.QRCodeData = "QR code provided in email";
 
             // Link return lines to order lines
             var matchedRetLineIds = new HashSet<Guid>();

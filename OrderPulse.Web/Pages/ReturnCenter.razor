@@ -88,10 +88,22 @@ else
                     <div class="return-card-actions">
                         @if (ret.QRCodeData is not null)
                         {
-                            <div class="qr-placeholder">
-                                <div style="font-size:2rem;">&#x1F4F1;</div>
-                                <div class="text-xs">Scan QR at drop-off</div>
-                            </div>
+                            @if (IsImageData(ret.QRCodeData))
+                            {
+                                <div class="qr-code-container" @onclick="() => ShowQrModal(ret)">
+                                    <img src="@GetQrImageSrc(ret.QRCodeData)"
+                                         alt="Return QR Code"
+                                         class="qr-code-thumbnail" />
+                                    <div class="text-xs mt-1">Tap to enlarge</div>
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="qr-placeholder">
+                                    <div style="font-size:2rem;">&#x1F4F1;</div>
+                                    <div class="text-xs">QR code in email</div>
+                                </div>
+                            }
                         }
 
                         @if (ret.DropOffLocation is not null)
@@ -157,6 +169,43 @@ else
                 }
             </div>
         }
+    </div>
+}
+
+@if (_showQrModal && _selectedQrReturn is not null)
+{
+    <div class="qr-modal-overlay" @onclick="CloseQrModal">
+        <div class="qr-modal" @onclick:stopPropagation="true">
+            <div class="qr-modal-header">
+                <h3 style="margin:0;font-size:1.1rem;font-weight:600;">Return QR Code</h3>
+                <button class="qr-modal-close" @onclick="CloseQrModal">&times;</button>
+            </div>
+            <div class="qr-modal-body">
+                @if (_selectedQrReturn.ExternalOrderNumber is not null)
+                {
+                    <div class="text-sm text-muted" style="margin-bottom:0.75rem;">
+                        Order @_selectedQrReturn.ExternalOrderNumber
+                    </div>
+                }
+                <img src="@GetQrImageSrc(_selectedQrReturn.QRCodeData!)"
+                     alt="Return QR Code"
+                     class="qr-code-fullsize" />
+                <div class="text-sm" style="margin-top:1rem;text-align:center;color:var(--text-secondary);">
+                    Show this QR code at the drop-off location
+                </div>
+                @if (_selectedQrReturn.DropOffLocation is not null)
+                {
+                    <div style="margin-top:0.75rem;padding:0.75rem;background:#f0f9ff;border-radius:8px;text-align:center;">
+                        <div class="text-xs font-semibold" style="color:var(--blue);">Drop off at</div>
+                        <div class="text-sm font-semibold">@_selectedQrReturn.DropOffLocation</div>
+                        @if (_selectedQrReturn.DropOffAddress is not null)
+                        {
+                            <div class="text-xs text-muted">@_selectedQrReturn.DropOffAddress</div>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
     </div>
 }
 
@@ -243,6 +292,70 @@ else
         text-align: center;
         margin-bottom: 0.5rem;
     }
+    .qr-code-container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 0.75rem;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: white;
+        cursor: pointer;
+        margin-bottom: 0.5rem;
+        transition: box-shadow 0.15s;
+    }
+    .qr-code-container:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.12); }
+    .qr-code-thumbnail {
+        width: 120px;
+        height: 120px;
+        object-fit: contain;
+        image-rendering: pixelated;
+    }
+    .qr-modal-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,0.5);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+    }
+    .qr-modal {
+        background: white;
+        border-radius: 16px;
+        max-width: 400px;
+        width: 90%;
+        overflow: hidden;
+        box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    }
+    .qr-modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 1rem 1.25rem;
+        border-bottom: 1px solid var(--border);
+    }
+    .qr-modal-close {
+        background: none;
+        border: none;
+        font-size: 1.5rem;
+        cursor: pointer;
+        color: var(--text-secondary);
+        line-height: 1;
+    }
+    .qr-modal-close:hover { color: var(--text-primary); }
+    .qr-modal-body {
+        padding: 1.5rem;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+    }
+    .qr-code-fullsize {
+        width: 280px;
+        height: 280px;
+        object-fit: contain;
+        image-rendering: pixelated;
+    }
     .dropoff-info { margin-top: 0.5rem; }
     .print-btn {
         padding: 0.5rem 1rem;
@@ -265,6 +378,8 @@ else
     private string _activeTab = "NeedToShip";
     private bool _loading = true;
     private int _needToShipCount = 0;
+    private bool _showQrModal = false;
+    private ReturnCardDto? _selectedQrReturn;
 
     protected override async Task OnInitializedAsync()
     {
@@ -335,5 +450,40 @@ else
         if (daysLeft == 0) return "Due today";
         if (daysLeft == 1) return "1 day left";
         return $"{daysLeft} days left";
+    }
+
+    /// <summary>
+    /// Checks if QRCodeData contains actual image data (data URI or URL) rather than placeholder text.
+    /// </summary>
+    private static bool IsImageData(string qrCodeData)
+    {
+        return qrCodeData.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase)
+            || qrCodeData.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+            || qrCodeData.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Returns the image src for a QR code. Data URIs are used as-is; raw base64 gets a PNG prefix.
+    /// </summary>
+    private static string GetQrImageSrc(string qrCodeData)
+    {
+        if (qrCodeData.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase))
+            return qrCodeData;
+        if (qrCodeData.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+            return qrCodeData;
+        // Assume raw base64 PNG data
+        return $"data:image/png;base64,{qrCodeData}";
+    }
+
+    private void ShowQrModal(ReturnCardDto ret)
+    {
+        _selectedQrReturn = ret;
+        _showQrModal = true;
+    }
+
+    private void CloseQrModal()
+    {
+        _showQrModal = false;
+        _selectedQrReturn = null;
     }
 }
