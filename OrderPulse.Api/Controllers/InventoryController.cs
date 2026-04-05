@@ -236,6 +236,41 @@ public class InventoryController : ControllerBase
     }
 
     /// <summary>
+    /// Get orders related to an inventory item (same product name across orders).
+    /// </summary>
+    [HttpGet("{id:guid}/related-orders")]
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<RelatedOrderDto>>>> GetRelatedOrders(
+        Guid id, CancellationToken ct)
+    {
+        var item = await _db.InventoryItems.FindAsync(new object[] { id }, ct);
+        if (item is null) return NotFound();
+
+        // Find other orders containing the same product
+        var relatedOrders = await _db.OrderLines
+            .Where(ol => ol.ProductName == item.ProductName && ol.OrderId != item.OrderId)
+            .Include(ol => ol.Order).ThenInclude(o => o!.Retailer)
+            .GroupBy(ol => ol.Order!)
+            .Select(g => new RelatedOrderDto(
+                g.Key.OrderId,
+                g.Key.ExternalOrderNumber,
+                g.Key.OrderDate,
+                g.Key.Status.ToString(),
+                g.Key.TotalAmount,
+                g.Key.Currency,
+                g.Key.Retailer != null ? g.Key.Retailer.Name : null,
+                g.Select(ol => new RelatedOrderLineDto(
+                    ol.ProductName,
+                    ol.Quantity,
+                    ol.UnitPrice,
+                    ol.LineTotal
+                )).ToList()
+            ))
+            .ToListAsync(ct);
+
+        return Ok(new ApiResponse<IReadOnlyList<RelatedOrderDto>>(relatedOrders));
+    }
+
+    /// <summary>
     /// Update durable item status/condition.
     /// </summary>
     [HttpPut("{id:guid}/status")]

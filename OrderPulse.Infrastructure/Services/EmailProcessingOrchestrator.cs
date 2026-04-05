@@ -1447,7 +1447,7 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
         }
     }
 
-    private async Task CreateTimelineEvent(
+    private Task CreateTimelineEvent(
         Guid orderId, EmailMessage email, string eventType,
         string summary, string? details, CancellationToken ct)
     {
@@ -1462,6 +1462,8 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
             Details = details,
             EmailMessageId = email.EmailMessageId
         });
+
+        return Task.CompletedTask;
     }
 
     private async Task FlagForReview(EmailMessage email, string reason, CancellationToken ct)

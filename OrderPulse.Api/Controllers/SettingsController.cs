@@ -60,18 +60,18 @@ public class SettingsController : ControllerBase
     /// Update tenant settings.
     /// </summary>
     [HttpPut]
-    public async Task<ActionResult> SaveSettings([FromBody] TenantSettingsUpdateDto update, CancellationToken ct)
+    public Task<ActionResult> SaveSettings([FromBody] TenantSettingsUpdateDto update, CancellationToken ct)
     {
         // In production, persist to a TenantSettings table.
         // For MVP, acknowledge the save.
-        return Ok();
+        return Task.FromResult<ActionResult>(Ok());
     }
 
     /// <summary>
     /// Trigger historical email import for a date range.
     /// </summary>
     [HttpPost("import")]
-    public async Task<ActionResult<HistoricalImportResultDto>> TriggerImport(
+    public Task<ActionResult<HistoricalImportResultDto>> TriggerImport(
         [FromBody] HistoricalImportRequestDto request, CancellationToken ct)
     {
         // In production, this would enqueue a Service Bus message
@@ -80,9 +80,9 @@ public class SettingsController : ControllerBase
         var daySpan = (request.EndDate - request.StartDate).Days;
         var estimatedEmails = Math.Max(1, daySpan * 3); // rough estimate
 
-        return Ok(new HistoricalImportResultDto(
+        return Task.FromResult<ActionResult<HistoricalImportResultDto>>(Ok(new HistoricalImportResultDto(
             EmailsQueued: estimatedEmails,
             Message: $"Queued import for {request.StartDate:MMM d} – {request.EndDate:MMM d, yyyy}. Processing will begin shortly."
-        ));
+        )));
     }
 }
