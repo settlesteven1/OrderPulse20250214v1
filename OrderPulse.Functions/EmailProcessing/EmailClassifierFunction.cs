@@ -106,6 +106,15 @@ public class EmailClassifierFunction
             email.ClassificationConfidence = result.Confidence;
             email.ProcessingStatus = ProcessingStatus.Classified;
 
+            // ServicePayment = digital subscription/service, not a physical order — skip parsing
+            if (result.Type == EmailClassificationType.ServicePayment)
+            {
+                email.ProcessingStatus = ProcessingStatus.Parsed;
+                await _db.SaveChangesAsync(ct);
+                _logger.LogInformation("Email {id} classified as ServicePayment (skipping parser)", id);
+                return null;
+            }
+
             // If confidence is too low, flag for review
             if (result.Confidence < 0.7m)
             {

@@ -105,6 +105,7 @@ public class EmailClassifierService : IEmailClassifier
             "returnreceived" => EmailClassificationType.ReturnReceived,
             "returnrejection" => EmailClassificationType.ReturnRejection,
             "refundconfirmation" => EmailClassificationType.RefundConfirmation,
+            "servicepayment" => EmailClassificationType.ServicePayment,
             "promotional" => EmailClassificationType.Promotional,
             _ => EmailClassificationType.Promotional
         };

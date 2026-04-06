@@ -226,12 +226,16 @@ public class EmailPollingFunction
     /// <summary>
     /// Parses common forwarded-email body patterns to find the original sender.
     /// Handles Gmail, Outlook, and generic forwarding formats.
+    ///
+    /// The body may be raw HTML (from Graph API), so we first convert it to plain text
+    /// to match forwarding preamble patterns. Gmail encodes angle brackets as &amp;lt;/&amp;gt;
+    /// and wraps everything in HTML tags, so regex on raw HTML fails.
     /// </summary>
     private static string? ExtractOriginalSenderFromBody(string body)
     {
-        // Pattern 1: Gmail-style "---------- Forwarded message ---------\nFrom: Name <email@domain.com>"
-        // Pattern 2: Outlook-style "From: Name <email@domain.com>" after forwarding separator
-        // Pattern 3: Generic "From: email@domain.com"
+        // Convert HTML to plain text first — forwarding preambles are inside HTML tags
+        // and angle brackets around email addresses are HTML-encoded as &lt; / &gt;
+        var plainText = ConvertHtmlToPlainText(body);
 
         // Match "From:" lines that follow a forwarding indicator
         var forwardIndicators = new[]
@@ -244,13 +248,13 @@ public class EmailPollingFunction
 
         foreach (var indicator in forwardIndicators)
         {
-            var indicatorMatch = Regex.Match(body, indicator, RegexOptions.IgnoreCase);
+            var indicatorMatch = Regex.Match(plainText, indicator, RegexOptions.IgnoreCase);
             if (!indicatorMatch.Success)
                 continue;
 
             // Look for "From:" within 500 chars after the indicator
             var searchStart = indicatorMatch.Index + indicatorMatch.Length;
-            var searchRegion = body.Substring(searchStart, Math.Min(500, body.Length - searchStart));
+            var searchRegion = plainText.Substring(searchStart, Math.Min(500, plainText.Length - searchStart));
 
             // Match "From:" followed by an email address (with or without display name)
             var fromMatch = Regex.Match(searchRegion,
@@ -264,7 +268,65 @@ public class EmailPollingFunction
             }
         }
 
+        // Fallback: look for "From:" anywhere in the first 3000 chars of plain text
+        // (some forwarded emails lack standard indicators)
+        var searchArea = plainText.Length > 3000 ? plainText[..3000] : plainText;
+        var fallbackMatch = Regex.Match(searchArea,
+            @"From:\s*(?:.*?<([^>]+@[^>]+)>|([A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}))",
+            RegexOptions.IgnoreCase);
+
+        if (fallbackMatch.Success)
+        {
+            var email = fallbackMatch.Groups[1].Success ? fallbackMatch.Groups[1].Value.Trim()
+                      : fallbackMatch.Groups[2].Value.Trim();
+            // Don't return the forwarding user's own email as the original sender
+            if (!email.Contains("gmail.com", StringComparison.OrdinalIgnoreCase) &&
+                !email.Contains("outlook.com", StringComparison.OrdinalIgnoreCase) &&
+                !email.Contains("hotmail.com", StringComparison.OrdinalIgnoreCase))
+            {
+                return email;
+            }
+        }
+
         return null;
+    }
+
+    /// <summary>
+    /// Lightweight HTML-to-plain-text conversion for extracting forwarding preamble.
+    /// Strips tags, decodes HTML entities (especially &amp;lt;/&amp;gt; around email addresses),
+    /// and collapses whitespace. Only processes the first ~5000 chars since the forwarding
+    /// preamble is always near the top.
+    /// </summary>
+    private static string ConvertHtmlToPlainText(string html)
+    {
+        // Only process the first ~5000 chars — the forwarding preamble is at the top
+        var input = html.Length > 5000 ? html[..5000] : html;
+
+        // Remove style/script blocks
+        var result = Regex.Replace(input, @"<style[^>]*>[\s\S]*?</style>", "", RegexOptions.IgnoreCase);
+        result = Regex.Replace(result, @"<script[^>]*>[\s\S]*?</script>", "", RegexOptions.IgnoreCase);
+        result = Regex.Replace(result, @"<!--[\s\S]*?-->", "");
+
+        // Convert block-level tags to newlines
+        result = Regex.Replace(result, @"<br\s*/?\s*>|</?p\s*>|</?div\s*>|</?tr\s*>", "\n", RegexOptions.IgnoreCase);
+
+        // Strip all remaining HTML tags
+        result = Regex.Replace(result, @"<[^>]+>", "");
+
+        // Decode HTML entities (critical: &lt; and &gt; around email addresses)
+        result = result.Replace("&lt;", "<");
+        result = result.Replace("&gt;", ">");
+        result = result.Replace("&amp;", "&");
+        result = result.Replace("&nbsp;", " ");
+        result = result.Replace("&quot;", "\"");
+        result = Regex.Replace(result, @"&#\d+;", "");
+        result = Regex.Replace(result, @"&\w+;", "");
+
+        // Collapse whitespace
+        result = Regex.Replace(result, @"[ \t]{2,}", " ");
+        result = Regex.Replace(result, @"(\r?\n){3,}", "\n\n");
+
+        return result.Trim();
     }
 
     /// <summary>
