@@ -16,6 +16,7 @@ ORDER-RELATED emails include:
 - Delivery confirmations or delivery issue reports
 - Return authorizations, labels, or status updates
 - Refund confirmations
+- Subscription/service payment receipts (Netflix, Spotify, Twitch, iCloud, etc.)
 
 NOT ORDER-RELATED emails include:
 - Marketing emails, sale announcements, promotional offers

@@ -282,6 +282,7 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
             EmailClassificationType.PaymentConfirmation
                 => await ProcessPaymentAsync(email, body, retailerContext, ct),
 
+            EmailClassificationType.ServicePayment => null, // Digital service/subscription — no order to create
             EmailClassificationType.Promotional => null,
 
             _ => throw new InvalidOperationException(

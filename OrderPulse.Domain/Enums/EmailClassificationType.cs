@@ -15,5 +15,6 @@ public enum EmailClassificationType
     ReturnReceived,
     ReturnRejection,
     RefundConfirmation,
+    ServicePayment,
     Promotional
 }

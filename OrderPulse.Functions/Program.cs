@@ -53,6 +53,9 @@ var host = new HostBuilder()
         services.AddSingleton<IEmailParser<PaymentParserResult>, PaymentParserService>();
         services.AddSingleton<EmailSectionSplitterService>();
 
+        // ── HTTP Client (for delivery tracking page fetching) ──
+        services.AddHttpClient("TrackingClient");
+
         // ── Domain Services ──
         services.AddScoped<RetailerMatcher>();
         services.AddScoped<OrderStateMachine>();
