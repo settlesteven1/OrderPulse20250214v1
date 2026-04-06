@@ -30,6 +30,23 @@ public record OrderListItemDto(
     DateTime? LastEventDate
 );
 
+/// <summary>
+/// Flattened DTO: one row per order line, with order-level fields repeated.
+/// Used by the "All Orders" table to show one row per item.
+/// </summary>
+public record OrderLineListItemDto(
+    Guid OrderId,
+    Guid OrderLineId,
+    string? RetailerName,
+    string ExternalOrderNumber,
+    string ProductName,
+    int Quantity,
+    DateTime OrderDate,
+    decimal? LineTotal,
+    string LineStatus,
+    string OrderStatus
+);
+
 public record OrderDetailDto(
     Guid OrderId,
     string ExternalOrderNumber,
