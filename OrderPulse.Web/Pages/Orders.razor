@@ -37,13 +37,13 @@
     </button>
 </div>
 
-<!-- Orders Table -->
+<!-- Orders Table — One Row Per Line Item -->
 <div class="card" style="padding:0;overflow:hidden;">
     @if (_loading)
     {
         <div class="loading">Loading orders...</div>
     }
-    else if (_orders.Count == 0)
+    else if (_lines.Count == 0)
     {
         <div class="loading">No orders found</div>
     }
@@ -52,30 +52,31 @@
         <table class="orders-table">
             <thead>
                 <tr>
-                    <th>Order</th>
                     <th>Retailer</th>
-                    <th>Date</th>
-                    <th>Items</th>
-                    <th>Total</th>
+                    <th>Order Number</th>
+                    <th>Item Description</th>
+                    <th style="text-align:center;">Qty</th>
+                    <th>Ordered</th>
+                    <th style="text-align:right;">Total $</th>
                     <th>Status</th>
                 </tr>
             </thead>
             <tbody>
-                @foreach (var order in _orders)
+                @{ string? prevOrderId = null; }
+                @foreach (var line in _lines)
                 {
-                    <tr @onclick="@(() => NavigateToOrder(order.OrderId))">
-                        <td>
-                            <div class="font-semibold">@order.ExternalOrderNumber</div>
-                            @if (order.FirstItemName is not null)
-                            {
-                                <div class="text-xs text-muted mt-1">@Truncate(order.FirstItemName, 40)</div>
-                            }
-                        </td>
-                        <td>@(order.RetailerName ?? "Unknown")</td>
-                        <td>@order.OrderDate.ToString("MMM d, yyyy")</td>
-                        <td>@order.ItemCount item@(order.ItemCount != 1 ? "s" : "")</td>
-                        <td>@FormatCurrency(order.TotalAmount, order.Currency)</td>
-                        <td><StatusBadge Status="@order.Status" /></td>
+                    var isNewOrder = line.OrderId.ToString() != prevOrderId;
+                    prevOrderId = line.OrderId.ToString();
+
+                    <tr class="@(isNewOrder ? "order-first-row" : "order-continuation-row")"
+                        @onclick="@(() => NavigateToOrder(line.OrderId))">
+                        <td>@(isNewOrder ? (line.RetailerName ?? "Unknown") : "")</td>
+                        <td>@(isNewOrder ? line.ExternalOrderNumber : "")</td>
+                        <td class="item-desc">@line.ProductName</td>
+                        <td style="text-align:center;">@line.Quantity</td>
+                        <td>@(isNewOrder ? line.OrderDate.ToString("MMM d, yyyy") : "")</td>
+                        <td style="text-align:right;">@FormatCurrency(line.LineTotal)</td>
+                        <td><StatusBadge Status="@line.LineStatus" /></td>
                     </tr>
                 }
             </tbody>
@@ -87,7 +88,7 @@
             <div class="pagination" style="padding:1rem;">
                 <span>
                     Showing @((_page - 1) * _pageSize + 1) to @Math.Min(_page * _pageSize, _pagination.TotalCount)
-                    of @_pagination.TotalCount
+                    of @_pagination.TotalCount lines
                 </span>
                 <div class="pagination-buttons">
                     <button disabled="@(_page <= 1)" @onclick="PreviousPage">Previous</button>
@@ -98,13 +99,31 @@
     }
 </div>
 
+<style>
+    .order-first-row {
+        border-top: 2px solid var(--border, #e0e0e0);
+    }
+
+    .order-continuation-row td {
+        padding-top: 0.25rem;
+        padding-bottom: 0.25rem;
+    }
+
+    .item-desc {
+        max-width: 400px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+</style>
+
 @code {
     [Inject] private OrderService OrderSvc { get; set; } = default!;
     [Inject] private NavigationManager Navigation { get; set; } = default!;
 
     [SupplyParameterFromQuery] public string? Shortcut { get; set; }
 
-    private List<OrderListItem> _orders = new();
+    private List<OrderLineListItem> _lines = new();
     private PaginationMeta? _pagination;
     private bool _loading = true;
 
@@ -113,7 +132,7 @@
     private string _sortBy = "OrderDate";
     private bool _sortDesc = true;
     private int _page = 1;
-    private int _pageSize = 25;
+    private int _pageSize = 50;
 
     protected override async Task OnInitializedAsync()
     {
@@ -128,7 +147,7 @@
 
         try
         {
-            var (items, pagination) = await OrderSvc.GetOrdersAsync(
+            var (items, pagination) = await OrderSvc.GetOrderLinesAsync(
                 shortcut: _activeShortcut,
                 search: string.IsNullOrWhiteSpace(_search) ? null : _search,
                 page: _page,
@@ -136,12 +155,12 @@
                 sort: _sortBy,
                 desc: _sortDesc);
 
-            _orders = items;
+            _lines = items;
             _pagination = pagination;
         }
         catch (Exception)
         {
-            _orders = new();
+            _lines = new();
         }
         finally
         {
@@ -187,12 +206,9 @@
     private string ActiveChipClass(string? shortcut) =>
         _activeShortcut == shortcut ? "active" : "";
 
-    private static string FormatCurrency(decimal? amount, string? currency) =>
+    private static string FormatCurrency(decimal? amount) =>
         amount.HasValue ? $"${amount:N2}" : "--";
 
     private async Task ExecuteSearch() { _page = 1; await LoadOrdersAsync(); }
     private async Task OnSortChanged() { _page = 1; await LoadOrdersAsync(); }
-
-    private static string Truncate(string text, int max) =>
-        text.Length <= max ? text : text[..max] + "...";
 }

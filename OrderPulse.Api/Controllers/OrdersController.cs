@@ -74,6 +74,71 @@ public class OrdersController : ControllerBase
     }
 
     /// <summary>
+    /// List orders flattened to one row per order line.
+    /// Returns the same filtered/sorted/paginated data as GetOrders, but each line item
+    /// is its own row with order-level fields (retailer, order number, date) repeated.
+    /// </summary>
+    [HttpGet("lines")]
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<OrderLineListItemDto>>>> GetOrderLines(
+        [FromQuery] string? status,
+        [FromQuery] string? shortcut,
+        [FromQuery] Guid? retailer,
+        [FromQuery] DateTime? dateFrom,
+        [FromQuery] DateTime? dateTo,
+        [FromQuery] string? search,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 50,
+        [FromQuery] string sort = "OrderDate",
+        [FromQuery] bool desc = true,
+        CancellationToken ct = default)
+    {
+        // Fetch more orders than page size since we flatten to lines
+        // (one order may produce multiple line rows)
+        var query = new OrderQueryParameters
+        {
+            Page = 1,
+            PageSize = 500, // fetch a larger set to flatten
+            Status = Enum.TryParse<OrderStatus>(status, true, out var s2) ? s2 : null,
+            StatusShortcut = shortcut,
+            RetailerId = retailer,
+            DateFrom = dateFrom,
+            DateTo = dateTo,
+            Search = search,
+            SortBy = sort,
+            SortDescending = desc
+        };
+
+        var (items, _) = await _orderRepo.GetOrdersAsync(query, ct);
+
+        // Flatten: one row per order line
+        var allLines = items.SelectMany(o => o.Lines.Select(l => new OrderLineListItemDto(
+            o.OrderId,
+            l.OrderLineId,
+            o.Retailer?.Name,
+            o.ExternalOrderNumber,
+            l.ProductName,
+            l.Quantity,
+            o.OrderDate,
+            l.LineTotal,
+            l.Status.ToString(),
+            o.Status.ToString()
+        ))).ToList();
+
+        var totalCount = allLines.Count;
+        var clampedPage = Math.Max(1, page);
+        var clampedSize = Math.Clamp(pageSize, 1, 100);
+        var pagedLines = allLines
+            .Skip((clampedPage - 1) * clampedSize)
+            .Take(clampedSize)
+            .ToList();
+
+        return Ok(new ApiResponse<IReadOnlyList<OrderLineListItemDto>>(
+            pagedLines,
+            new PaginationMeta(clampedPage, clampedSize, totalCount)
+        ));
+    }
+
+    /// <summary>
     /// Get full order detail including lines, shipments, deliveries, returns, and refunds.
     /// </summary>
     [HttpGet("{id:guid}")]

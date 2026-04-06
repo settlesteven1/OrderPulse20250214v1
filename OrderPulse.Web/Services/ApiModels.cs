@@ -57,6 +57,23 @@ public class RetailerSummary
     public int? ReturnPolicyDays { get; set; }
 }
 
+/// <summary>
+/// Flattened order line for the "All Orders" table — one row per item.
+/// </summary>
+public class OrderLineListItem
+{
+    public Guid OrderId { get; set; }
+    public Guid OrderLineId { get; set; }
+    public string? RetailerName { get; set; }
+    public string ExternalOrderNumber { get; set; } = string.Empty;
+    public string ProductName { get; set; } = string.Empty;
+    public int Quantity { get; set; }
+    public DateTime OrderDate { get; set; }
+    public decimal? LineTotal { get; set; }
+    public string LineStatus { get; set; } = string.Empty;
+    public string OrderStatus { get; set; } = string.Empty;
+}
+
 public class OrderDetailModel
 {
     public Guid OrderId { get; set; }

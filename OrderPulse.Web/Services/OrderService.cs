@@ -32,6 +32,30 @@ public class OrderService
         return (response?.Data ?? new(), response?.Meta);
     }
 
+    /// <summary>
+    /// Fetches order lines flattened to one row per item, with order-level fields included.
+    /// </summary>
+    public async Task<(List<OrderLineListItem> Items, PaginationMeta? Pagination)> GetOrderLinesAsync(
+        string? shortcut = null,
+        string? status = null,
+        string? search = null,
+        int page = 1,
+        int pageSize = 50,
+        string sort = "OrderDate",
+        bool desc = true)
+    {
+        var queryParams = new List<string> { $"page={page}", $"pageSize={pageSize}", $"sort={sort}", $"desc={desc}" };
+
+        if (!string.IsNullOrEmpty(shortcut)) queryParams.Add($"shortcut={shortcut}");
+        if (!string.IsNullOrEmpty(status)) queryParams.Add($"status={status}");
+        if (!string.IsNullOrEmpty(search)) queryParams.Add($"search={Uri.EscapeDataString(search)}");
+
+        var url = $"api/orders/lines?{string.Join("&", queryParams)}";
+        var response = await _http.GetFromJsonAsync<ApiResponse<List<OrderLineListItem>>>(url);
+
+        return (response?.Data ?? new(), response?.Meta);
+    }
+
     public async Task<OrderDetailModel?> GetOrderDetailModelAsync(Guid orderId)
     {
         var response = await _http.GetFromJsonAsync<ApiResponse<OrderDetailModel>>($"api/orders/{orderId}");
