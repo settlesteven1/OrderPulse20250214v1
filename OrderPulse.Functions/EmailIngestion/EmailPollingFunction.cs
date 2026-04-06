@@ -176,8 +176,12 @@ public class EmailPollingFunction
             }
         }
 
-        // Update last sync time
-        tenant.LastSyncAt = DateTime.UtcNow;
+        // Update last sync time to the latest message's received time (not "now")
+        // so the next poll picks up where this batch left off, avoiding gaps
+        var lastMessageTime = messages
+            .Where(m => m.ReceivedDateTime.HasValue)
+            .Max(m => m.ReceivedDateTime!.Value.UtcDateTime);
+        tenant.LastSyncAt = lastMessageTime;
         await _db.SaveChangesAsync(ct);
 
         _logger.LogInformation("Polled mailbox for tenant {tenantId}: {new} new of {total} messages",
