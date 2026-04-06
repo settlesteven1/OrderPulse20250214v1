@@ -7,33 +7,33 @@ using OrderPulse.Infrastructure.Data;
 using OrderPulse.Infrastructure.Services;
 using OrderPulse.Domain.Entities;
 using OrderPulse.Domain.Enums;
-using Azure.Messaging.ServiceBus;
 
 namespace OrderPulse.Functions.EmailIngestion;
 
 /// <summary>
 /// Timer-triggered function that polls each active tenant's mailbox for new emails.
-/// Runs every 5 minutes. For each new email found, stores the body in Blob Storage,
-/// creates an EmailMessage record, and publishes to the Service Bus queue for processing.
+/// Runs every 5 minutes. For each new email found, stores the body in Blob Storage
+/// and creates an EmailMessage record with Pending status.
+///
+/// Processing is handled separately by EmailProcessingBatchFunction, which picks up
+/// Pending/Classified emails in chronological order. This decoupling ensures order
+/// confirmations process before their shipment/delivery emails.
 /// </summary>
 public class EmailPollingFunction
 {
     private readonly ILogger<EmailPollingFunction> _logger;
     private readonly OrderPulseDbContext _db;
-    private readonly ServiceBusClient _serviceBus;
     private readonly GraphMailService _graphMail;
     private readonly EmailBlobStorageService _blobStorage;
 
     public EmailPollingFunction(
         ILogger<EmailPollingFunction> logger,
         OrderPulseDbContext db,
-        ServiceBusClient serviceBus,
         GraphMailService graphMail,
         EmailBlobStorageService blobStorage)
     {
         _logger = logger;
         _db = db;
-        _serviceBus = serviceBus;
         _graphMail = graphMail;
         _blobStorage = blobStorage;
     }
@@ -54,27 +54,22 @@ public class EmailPollingFunction
 
         _logger.LogInformation("Found {count} active tenants to poll", tenants.Count);
 
-        var sender = _serviceBus.CreateSender("emails-pending");
-
         foreach (var tenant in tenants)
         {
             try
             {
-                await PollTenantMailboxAsync(tenant, sender, ct);
+                await PollTenantMailboxAsync(tenant, ct);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to poll mailbox for tenant {tenantId}", tenant.TenantId);
             }
         }
-
-        await sender.DisposeAsync();
         _logger.LogInformation("Email polling completed at {time}", DateTime.UtcNow);
     }
 
     private async Task PollTenantMailboxAsync(
         Tenant tenant,
-        ServiceBusSender sender,
         CancellationToken ct)
     {
         if (string.IsNullOrEmpty(tenant.PurchaseMailbox))
@@ -160,10 +155,8 @@ public class EmailPollingFunction
                 _db.EmailMessages.Add(email);
                 await _db.SaveChangesAsync(ct);
 
-                // Publish to Service Bus for async processing
-                var sbMsg = new ServiceBusMessage(email.EmailMessageId.ToString());
-                sbMsg.ApplicationProperties["TenantId"] = tenant.TenantId.ToString();
-                await sender.SendMessageAsync(sbMsg, ct);
+                // Email is saved with Pending status — EmailProcessingBatchFunction
+                // will pick it up in chronological order for classification and parsing
 
                 newCount++;
                 _logger.LogDebug("Ingested message {graphId} as {emailId}", msg.Id, email.EmailMessageId);
@@ -303,13 +296,16 @@ public class EmailPollingFunction
     /// </summary>
     private static string ConvertHtmlToPlainText(string html)
     {
-        // Only process the first ~5000 chars — the forwarding preamble is at the top
-        var input = html.Length > 5000 ? html[..5000] : html;
-
-        // Remove style/script blocks
-        var result = Regex.Replace(input, @"<style[^>]*>[\s\S]*?</style>", "", RegexOptions.IgnoreCase);
+        // Strip styles/scripts/comments FIRST (they can be 5-8 KB of CSS alone),
+        // then truncate. Previously we truncated at 5K before stripping, which cut
+        // off the forwarding preamble that sits after a huge <style> block.
+        var result = Regex.Replace(html, @"<style[^>]*>[\s\S]*?</style>", "", RegexOptions.IgnoreCase);
         result = Regex.Replace(result, @"<script[^>]*>[\s\S]*?</script>", "", RegexOptions.IgnoreCase);
         result = Regex.Replace(result, @"<!--[\s\S]*?-->", "");
+
+        // Now truncate — the preamble is near the top after style stripping
+        if (result.Length > 8000)
+            result = result[..8000];
 
         // Convert block-level tags to newlines
         result = Regex.Replace(result, @"<br\s*/?\s*>|</?p\s*>|</?div\s*>|</?tr\s*>", "\n", RegexOptions.IgnoreCase);
