@@ -411,6 +411,9 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
                 existingOrder.IsInferred = false;
                 existingOrder.OrderDate = TryParseDate(parsed.OrderDate) ?? existingOrder.OrderDate;
                 existingOrder.ExternalOrderUrl = parsed.ExternalOrderUrl ?? existingOrder.ExternalOrderUrl;
+                // Set retailer if the stub didn't have one (common when created from shipment emails)
+                if (existingOrder.RetailerId is null && retailer is not null)
+                    existingOrder.RetailerId = retailer.RetailerId;
                 await _log.Info(email.EmailMessageId, "StubEnriched",
                     $"Enriched stub order {existingOrder.OrderId} — #{existingOrder.ExternalOrderNumber}");
             }

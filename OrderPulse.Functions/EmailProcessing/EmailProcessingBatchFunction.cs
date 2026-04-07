@@ -29,6 +29,9 @@ public class EmailProcessingBatchFunction
     /// <summary>Maximum emails to process per run (to stay within function timeout).</summary>
     private const int MaxPerRun = 20;
 
+    /// <summary>Maximum retries before giving up on an email.</summary>
+    private const int MaxRetries = 3;
+
     public EmailProcessingBatchFunction(
         ILogger<EmailProcessingBatchFunction> logger,
         OrderPulseDbContext db,
@@ -48,12 +51,16 @@ public class EmailProcessingBatchFunction
         [TimerTrigger("0 */2 * * * *")] TimerInfo timer,
         CancellationToken ct)
     {
-        // Find unprocessed emails: Pending (needs classification) or Classified (needs parsing)
-        // Ordered by ReceivedAt ascending so older emails process first
+        // Find unprocessed emails: Pending (needs classification), Classified (needs parsing),
+        // or stuck in transitional states (Classifying/Parsing) from previous failed runs.
+        // Ordered by ReceivedAt ascending so older emails process first.
         var emails = await _db.EmailMessages
             .IgnoreQueryFilters()
             .Where(e => e.ProcessingStatus == ProcessingStatus.Pending
-                     || e.ProcessingStatus == ProcessingStatus.Classified)
+                     || e.ProcessingStatus == ProcessingStatus.Classified
+                     || e.ProcessingStatus == ProcessingStatus.Classifying
+                     || e.ProcessingStatus == ProcessingStatus.Parsing)
+            .Where(e => e.RetryCount < MaxRetries)
             .OrderBy(e => e.ReceivedAt)
             .Take(MaxPerRun)
             .ToListAsync(ct);
@@ -81,6 +88,24 @@ public class EmailProcessingBatchFunction
                 await _db.Database.ExecuteSqlRawAsync(
                     "EXEC sp_set_session_context @key=N'TenantId', @value={0}",
                     email.TenantId.ToString());
+
+                // Reset stuck transitional states from previous failed runs
+                if (email.ProcessingStatus == ProcessingStatus.Classifying)
+                {
+                    email.ProcessingStatus = ProcessingStatus.Pending;
+                    email.RetryCount++;
+                    await _db.SaveChangesAsync(ct);
+                    _logger.LogWarning("Reset stuck Classifying email {id} (retry {retry})",
+                        email.EmailMessageId, email.RetryCount);
+                }
+                else if (email.ProcessingStatus == ProcessingStatus.Parsing)
+                {
+                    email.ProcessingStatus = ProcessingStatus.Classified;
+                    email.RetryCount++;
+                    await _db.SaveChangesAsync(ct);
+                    _logger.LogWarning("Reset stuck Parsing email {id} (retry {retry})",
+                        email.EmailMessageId, email.RetryCount);
+                }
 
                 if (email.ProcessingStatus == ProcessingStatus.Pending)
                 {
