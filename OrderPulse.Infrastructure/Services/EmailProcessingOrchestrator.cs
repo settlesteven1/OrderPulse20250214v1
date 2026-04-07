@@ -118,15 +118,6 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
             email.ProcessingStatus = ProcessingStatus.Parsing;
             await _db.SaveChangesAsync(ct);
 
-            // Match retailer
-            var retailer = await _retailerMatcher.MatchAsync(email.FromAddress, email.OriginalFromAddress, ct);
-            var retailerContext = retailer?.Name;
-            var matchSource = retailer != null
-                ? $"Matched retailer: {retailer.Name}"
-                : $"No retailer match for {email.FromAddress}" +
-                  (email.OriginalFromAddress != null ? $" (original: {email.OriginalFromAddress})" : "");
-            await _log.Info(emailMessageId, "RetailerMatch", matchSource);
-
             // Retrieve full body from Blob Storage, fall back to preview
             var body = email.BodyPreview ?? "";
             var bodySource = "preview";
@@ -154,6 +145,30 @@ public class EmailProcessingOrchestrator : IEmailProcessingOrchestrator
             {
                 await _log.Warn(emailMessageId, "BlobFetch", "No BodyBlobUrl set, using preview only");
             }
+
+            // Match retailer — try FromAddress and OriginalFromAddress first,
+            // then fall back to scanning the email body for retailer email addresses
+            var retailer = await _retailerMatcher.MatchAsync(email.FromAddress, email.OriginalFromAddress, ct);
+            if (retailer is null)
+            {
+                var (bodyRetailer, matchedAddress) = await _retailerMatcher.MatchFromBodyAsync(body, ct);
+                if (bodyRetailer is not null)
+                {
+                    retailer = bodyRetailer;
+                    // Backfill OriginalFromAddress so future lookups don't need the body scan
+                    if (email.OriginalFromAddress is null && matchedAddress is not null)
+                    {
+                        email.OriginalFromAddress = matchedAddress;
+                        await _db.SaveChangesAsync(ct);
+                    }
+                }
+            }
+            var retailerContext = retailer?.Name;
+            var matchSource = retailer != null
+                ? $"Matched retailer: {retailer.Name}"
+                : $"No retailer match for {email.FromAddress}" +
+                  (email.OriginalFromAddress != null ? $" (original: {email.OriginalFromAddress})" : "");
+            await _log.Info(emailMessageId, "RetailerMatch", matchSource);
 
             await _log.Info(emailMessageId, "BodyRetrieved",
                 $"Source: {bodySource}, RawLength: {body.Length} chars",
