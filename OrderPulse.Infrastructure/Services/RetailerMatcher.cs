@@ -19,6 +19,15 @@ public partial class RetailerMatcher
     [GeneratedRegex(@"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}", RegexOptions.Compiled)]
     private static partial Regex EmailAddressPattern();
 
+    /// <summary>
+    /// Decodes Apple Mail Hide My Email proxy addresses.
+    /// Format: localpart_at_domain_tld_randomchars@icloud.com
+    /// Example: noreply_at_bambulab_com_4tztfywmnc1050_24c198c8@icloud.com → noreply@bambulab.com
+    /// </summary>
+    [GeneratedRegex(@"^(.+?)_at_(.+?)_(com|net|org|io|co)_[a-z0-9]+(?:_[a-z0-9]+)*@icloud\.com$",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled)]
+    private static partial Regex AppleProxyAddress();
+
     /// <summary>Common personal email domains to skip when scanning the body.</summary>
     private static readonly HashSet<string> PersonalDomains = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -55,9 +64,39 @@ public partial class RetailerMatcher
         if (!string.IsNullOrWhiteSpace(originalFromAddress))
         {
             result = await MatchByAddressAsync(originalFromAddress, ct);
+            if (result is not null)
+                return result;
+
+            // Try decoding Apple Mail "Hide My Email" proxy addresses
+            // e.g. noreply_at_bambulab_com_xxx@icloud.com → noreply@bambulab.com
+            var decoded = DecodeAppleProxyAddress(originalFromAddress);
+            if (decoded is not null)
+            {
+                result = await MatchByAddressAsync(decoded, ct);
+            }
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Decodes an Apple Mail "Hide My Email" proxy address back to the original email.
+    /// Format: localpart_at_domain_tld_randomchars@icloud.com
+    /// Returns null if the address isn't an Apple proxy.
+    /// </summary>
+    internal static string? DecodeAppleProxyAddress(string? address)
+    {
+        if (string.IsNullOrWhiteSpace(address))
+            return null;
+
+        var match = AppleProxyAddress().Match(address);
+        if (!match.Success)
+            return null;
+
+        var localPart = match.Groups[1].Value;
+        var domain = match.Groups[2].Value;
+        var tld = match.Groups[3].Value;
+        return $"{localPart}@{domain}.{tld}";
     }
 
     /// <summary>
@@ -91,6 +130,18 @@ public partial class RetailerMatcher
             var retailer = await MatchByAddressAsync(candidate, ct);
             if (retailer is not null)
                 return (retailer, candidate);
+        }
+
+        // Try decoding Apple proxy addresses found in the body
+        var allAddresses = matches.Select(m => m.Value).Distinct().ToList();
+        foreach (var addr in allAddresses)
+        {
+            var decoded = DecodeAppleProxyAddress(addr);
+            if (decoded is null) continue;
+
+            var retailer = await MatchByAddressAsync(decoded, ct);
+            if (retailer is not null)
+                return (retailer, decoded);
         }
 
         return (null, null);
